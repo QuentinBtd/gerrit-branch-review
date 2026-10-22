@@ -18,6 +18,14 @@ import org.junit.Test;
 
 public class LifecycleIT extends AbstractBranchReviewIT {
   private static final String FEATURE = "refs/heads/feature/life";
+
+  @com.google.inject.Inject
+  private com.google.gerrit.acceptance.ExtensionRegistry extensionRegistry;
+
+  @com.google.inject.Inject
+  private com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations
+      requestScopeOperations;
+
   private TestRepository<InMemoryRepository> repo;
   private int number;
 
@@ -166,6 +174,52 @@ public class LifecycleIT extends AbstractBranchReviewIT {
     syncViaRest(user, FEATURE, new PostSync.Input());
     assertThat(change(number).revisions).hasSize(2);
     assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  @Test
+  public void moveDuringSynchronizationIsDetected() throws Exception {
+    serverCommit("refs/heads/stable", "s.txt", "s\n");
+    var moved = new java.util.concurrent.atomic.AtomicBoolean();
+    // Moves the Change while the new patch set is being inserted (after the plugin read it).
+    com.google.gerrit.server.git.validators.CommitValidationListener mover =
+        new com.google.gerrit.server.git.validators.CommitValidationListener() {
+          @Override
+          public java.util.List<com.google.gerrit.server.git.validators.CommitValidationMessage>
+              onCommitReceived(com.google.gerrit.server.events.CommitReceivedEvent e) {
+            if (e.command.getRefName().startsWith("refs/changes/")
+                && moved.compareAndSet(false, true)) {
+              Thread t =
+                  new Thread(
+                      () -> {
+                        try {
+                          requestScopeOperations.setApiUser(admin.id());
+                          gApi.changes().id(project.get(), number).move("stable");
+                        } catch (Exception ex) {
+                          throw new IllegalStateException(ex);
+                        }
+                      });
+              t.start();
+              try {
+                t.join();
+              } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+              }
+            }
+            return java.util.List.of();
+          }
+        };
+    PushResult r;
+    try (var reg = extensionRegistry.newRegistration().add(mover)) {
+      commits(repo, "b", 1);
+      r = push(repo, FEATURE);
+    }
+    assertOk(r, FEATURE);
+    assertThat(moved.get()).isTrue();
+    assertThat(change(number).branch).isEqualTo("stable");
+    // Nothing computed against master was delivered to stable.
+    assertThat(change(number).revisions).hasSize(1);
+    assertThat(joined(r)).contains("was moved from refs/heads/master to refs/heads/stable");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.BLOCKED);
   }
 
   @Test

@@ -31,8 +31,11 @@ import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import io.github.quentinbtd.gerrit.branchreview.validation.ConfigValidator;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
@@ -178,6 +181,7 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
     }
     try (Repository repo = repoManager.openRepository(args.getProject())) {
       RevWalk rw = args.getRevWalk();
+      PatchSetIndex patchSets = new PatchSetIndex(repo);
       for (ReceiveCommand cmd : args.getCommands().values()) {
         if (!cmd.getRefName().startsWith("refs/heads/")
             || cmd.getNewId().equals(ObjectId.zeroId())) {
@@ -209,7 +213,7 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
           if (firstParentChain.contains(id)) {
             continue;
           }
-          Optional<Integer> change = submittedReview(repo, id, cmd.getRefName());
+          Optional<Integer> change = submittedReview(repo, patchSets, id, cmd.getRefName());
           if (change.isPresent()) {
             throw new ValidationException(
                 "branch-review: Change "
@@ -230,13 +234,9 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
    * The number of the branch review being submitted now to {@code target} whose current patch set
    * is {@code commit}, if any.
    */
-  private Optional<Integer> submittedReview(Repository repo, ObjectId commit, String target)
-      throws IOException {
-    for (Ref r : repo.getRefDatabase().getTipsWithSha1(commit)) {
-      PatchSet.Id ps = PatchSet.Id.fromRef(r.getName());
-      if (ps == null) {
-        continue;
-      }
+  private Optional<Integer> submittedReview(
+      Repository repo, PatchSetIndex patchSets, ObjectId commit, String target) throws IOException {
+    for (PatchSet.Id ps : patchSets.get(commit)) {
       StateStore.Loaded<ChangeLink> link = store.loadLink(repo, ps.changeId().get());
       if (!link.exists()) {
         continue;
@@ -250,6 +250,32 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
       }
     }
     return Optional.empty();
+  }
+
+  /**
+   * Patch set refs by commit, built at most once per Submit and only when needed: one scan of
+   * {@code refs/changes/} instead of a full ref scan per looked-up commit.
+   */
+  private static final class PatchSetIndex {
+    private final Repository repo;
+    private Map<ObjectId, List<PatchSet.Id>> byCommit;
+
+    PatchSetIndex(Repository repo) {
+      this.repo = repo;
+    }
+
+    List<PatchSet.Id> get(ObjectId commit) throws IOException {
+      if (byCommit == null) {
+        byCommit = new HashMap<>();
+        for (Ref r : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES)) {
+          PatchSet.Id ps = PatchSet.Id.fromRef(r.getName());
+          if (ps != null && r.getObjectId() != null) {
+            byCommit.computeIfAbsent(r.getObjectId().copy(), k -> new ArrayList<>()).add(ps);
+          }
+        }
+      }
+      return byCommit.getOrDefault(commit, List.of());
+    }
   }
 
   private void checkSubmitType(Repository repo, CodeReviewCommit commit, String dest)

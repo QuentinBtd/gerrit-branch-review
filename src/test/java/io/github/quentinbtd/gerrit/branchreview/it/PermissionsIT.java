@@ -301,6 +301,25 @@ public class PermissionsIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void excludedBranchDoesNotRevealAPrivateChange() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> adminRepo = cloneAs(admin);
+    commits(adminRepo, "a", 1);
+    push(adminRepo, FEATURE);
+    int n = onlyChange();
+    gApi.changes().id(project.get(), n).setPrivate(true);
+    setConfig(DEFAULT_CONFIG + "  excludeBranchPattern = " + FEATURE + "\n");
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    repo.git().fetch().setRemote("origin").setRefSpecs("+" + FEATURE + ":" + FEATURE).call();
+    repo.reset(refValue(FEATURE));
+    commits(repo, "b", 1);
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("its review Change was not updated");
+    assertThat(joined(r)).doesNotContain("Change " + n);
+  }
+
+  @Test
   public void syncRequiresPushPermissionOnSource() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(admin);

@@ -300,8 +300,10 @@ public class SyncService {
           return SyncResult.of(
               SyncResult.Kind.NOT_SYNCHRONIZED,
               sourceRef,
-              "branch no longer matches branch-review.config patterns; Change "
-                  + lc.changeNumber
+              "branch no longer matches branch-review.config patterns; "
+                  + visibleChange(project, lc.changeNumber, user)
+                      .map(n -> "Change " + n)
+                      .orElse("its review Change")
                   + " was not updated");
         }
         return SyncResult.ignored(sourceRef);
@@ -880,7 +882,9 @@ public class SyncService {
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
         BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
       bu.setRepository(repo, rw, ins);
-      bu.addOp(notes.getChangeId(), new ExpectCurrentPatchSet(current.id()));
+      bu.addOp(
+          notes.getChangeId(),
+          new ExpectCurrentPatchSet(current.id(), notes.getChange().getDest()));
       PatchSetInserter psi =
           patchSetInserterFactory
               .create(notes, psId, commit)
@@ -900,18 +904,24 @@ public class SyncService {
     return result(SyncResult.Kind.UPDATED, project, lc, after.getChange().isWorkInProgress());
   }
 
-  /** Fails the batch if a patch set was added or the change closed since it was read. */
+  /**
+   * Fails the batch if, since the Change was read, a patch set was added, the Change was closed or
+   * it was moved to another branch. The synchronization is then retried from fresh state, where the
+   * moved-target check stops it.
+   */
   private static final class ExpectCurrentPatchSet implements BatchUpdateOp {
     private final PatchSet.Id expected;
+    private final BranchNameKey dest;
 
-    ExpectCurrentPatchSet(PatchSet.Id expected) {
+    ExpectCurrentPatchSet(PatchSet.Id expected, BranchNameKey dest) {
       this.expected = expected;
+      this.dest = dest;
     }
 
     @Override
     public boolean updateChange(ChangeContext ctx) throws ResourceConflictException {
       Change c = ctx.getChange();
-      if (!c.currentPatchSetId().equals(expected) || !c.isNew()) {
+      if (!c.currentPatchSetId().equals(expected) || !c.isNew() || !c.getDest().equals(dest)) {
         throw new ResourceConflictException(
             "Change " + c.getId() + " was modified concurrently; synchronization will be retried");
       }

@@ -31,7 +31,8 @@ Submit just before it is applied. Among the newly introduced commits it finds th
 sets of reviews being submitted now (active lifecycle targeting that ref) and requires each of
 them to be on the first-parent chain of the update; a review reached only through a merge, even
 behind other commits, is rejected. Patch sets of earlier, merged lifecycles are ordinary history,
-so maintenance merges (e.g. master into stable) are unaffected. Under `MERGE_IF_NECESSARY` two reviews based on the same
+so maintenance merges (e.g. master into stable) are unaffected. Patch set refs are indexed by
+commit once per Submit (one scan of `refs/changes/`, only when a merge is involved). Under `MERGE_IF_NECESSARY` two reviews based on the same
 tip must therefore be submitted separately (or rebased); rebase and cherry-pick types add one
 commit per review.
 
