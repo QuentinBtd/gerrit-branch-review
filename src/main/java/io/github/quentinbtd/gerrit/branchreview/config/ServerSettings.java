@@ -24,6 +24,7 @@ public class ServerSettings {
   private final int maxQueued;
   private final int recoveryIntervalSeconds;
   private final int maxAttempts;
+  private final int stopGraceSeconds;
 
   @Inject
   ServerSettings(PluginConfigFactory cfgFactory, @PluginName String pluginName) {
@@ -35,6 +36,7 @@ public class ServerSettings {
     maxQueued = clamp(cfg.getInt("maxQueued", 200), 1, 100_000);
     recoveryIntervalSeconds = clamp(cfg.getInt("recoveryIntervalSeconds", 300), 0, 86_400);
     maxAttempts = clamp(cfg.getInt("maxAttempts", 5), 1, 100);
+    stopGraceSeconds = clamp(cfg.getInt("stopGraceSeconds", 30), 0, 3600);
   }
 
   private static int clamp(int v, int min, int max) {
@@ -69,5 +71,10 @@ public class ServerSettings {
 
   public int maxAttempts() {
     return maxAttempts;
+  }
+
+  /** Seconds queued work may run on stop before running work is interrupted. */
+  public int stopGraceSeconds() {
+    return stopGraceSeconds;
   }
 }

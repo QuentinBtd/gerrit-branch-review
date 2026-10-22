@@ -52,21 +52,46 @@ public class SyncExecutor implements LifecycleListener {
     pool = workQueue.createQueue(settings.threads(), "BranchReview");
   }
 
+  /**
+   * Stops the pool and returns only once no worker of this instance runs any more.
+   *
+   * <p>Queued work gets a grace period, then running work is interrupted. Even then this method
+   * keeps waiting: on reload Gerrit stops this instance before starting the replacement, and a
+   * replacement with its own in-process locks must never run while an old worker can still insert a
+   * Change (it would see an unconfirmed reservation and create a second one). A worker stuck in
+   * non-interruptible work therefore delays the reload or shutdown rather than risking a duplicate;
+   * this is logged.
+   */
   @Override
   public void stop() {
     ScheduledExecutorService p = pool;
     pool = null;
-    if (p != null) {
-      p.shutdown();
+    if (p == null) {
+      return;
+    }
+    p.shutdown();
+    boolean interrupted = false;
+    try {
+      if (!p.awaitTermination(settings.stopGraceSeconds(), TimeUnit.SECONDS)) {
+        p.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      p.shutdownNow();
+      interrupted = true;
+    }
+    while (!p.isTerminated()) {
       try {
         if (!p.awaitTermination(30, TimeUnit.SECONDS)) {
-          // Interrupted work leaves a durable reservation that recovery resolves on restart.
-          p.shutdownNow();
+          log.atWarning().log(
+              "branch-review is waiting for %d running task(s) to finish before it stops",
+              inFlight.get());
         }
       } catch (InterruptedException e) {
-        p.shutdownNow();
-        Thread.currentThread().interrupt();
+        interrupted = true;
       }
+    }
+    if (interrupted) {
+      Thread.currentThread().interrupt();
     }
   }
 

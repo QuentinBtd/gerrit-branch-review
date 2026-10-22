@@ -19,6 +19,7 @@ import io.github.quentinbtd.gerrit.branchreview.api.PostSync;
 import io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService;
 import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
 import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
+import io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncResult;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import java.util.ArrayList;
@@ -298,6 +299,61 @@ public class RecoveryIT extends AbstractBranchReviewIT {
     assertThat(fileAt(refValue(FEATURE), "a/file1.txt")).isEqualTo("edited\n");
     // Nothing left to do afterwards.
     assertThat(plugin.getSysInjector().getInstance(RecoveryService.class).runOnce()).isEqualTo(0);
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.stopGraceSeconds",
+      value = "1")
+  public void stopWaitsForAnInFlightSynchronizationEvenWhenInterrupted() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    commits(repo, "a", 1);
+    setConfig(null);
+    push(repo, FEATURE);
+    enable();
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var interrupted = new AtomicBoolean();
+    // Slow, non-interruptible work inside the Change insertion.
+    CommitValidationListener slow =
+        new CommitValidationListener() {
+          @Override
+          public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent e) {
+            if (e.command.getRefName().startsWith("refs/changes/")) {
+              entered.countDown();
+              while (true) {
+                try {
+                  release.await();
+                  break;
+                } catch (InterruptedException ex) {
+                  interrupted.set(true);
+                }
+              }
+            }
+            return List.of();
+          }
+        };
+    var executor = plugin.getSysInjector().getInstance(SyncExecutor.class);
+    try (Registration reg = extensionRegistry.newRegistration().add(slow)) {
+      var sync =
+          executor
+              .submit(
+                  project, FEATURE, user.id(), SyncService.Trigger.MANUAL, SyncService.Options.NONE)
+              .orElseThrow();
+      assertThat(entered.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      Thread stopper = new Thread(executor::stop);
+      stopper.start();
+      // Past the grace period the worker is interrupted, but stop() must keep waiting.
+      waitFor(interrupted::get);
+      stopper.join(2000);
+      assertThat(stopper.isAlive()).isTrue();
+      release.countDown();
+      stopper.join(60_000);
+      assertThat(stopper.isAlive()).isFalse();
+      assertThat(sync.isDone()).isTrue();
+    }
+    assertThat(changes().size()).isAtMost(1);
   }
 
   @Test
