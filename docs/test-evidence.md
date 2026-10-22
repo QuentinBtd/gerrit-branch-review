@@ -24,8 +24,8 @@ on GitHub is not evidence; all results below are local runs.
 | Commit-msg hook | `git commit -m "updated readme"` with hooks installed | passed (rejected: "subject must follow Conventional Commits") |
 | Hooks on all files | `mise run hooks:run` | passed (after fixing a buildifier pathspec bug and a missing executable bit it found) |
 | Local CI equivalent | `mise run verify` (format, hooks, lint, unit tests, build of 3 series) | passed |
-| Unit tests | `mise run test` (also per series in the matrix) | passed: 24 cases × 3 series |
-| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 75 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 18, `SubmitIT` 17, `PermissionsIT` 10, `LifecycleIT` 10, `RecoveryIT` 6) |
+| Unit tests | `mise run test` (also per series in the matrix) | passed: 27 cases × 3 series |
+| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 81 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 20, `SubmitIT` 18, `PermissionsIT` 10, `LifecycleIT` 12, `RecoveryIT` 7) |
 | Black-box tests | `bash tools/scripts/test.sh blackbox <series>` | passed: 9 cases × 3 series |
 | Full matrix | `mise run test:matrix` | passed (exit 0) for 3.12.11, 3.13.10, 3.14.4; re-run on 2026-10-22 after adding `syncEditsToBranch` (main checkout, branch `feat/initial-branch-review`) |
 | Packaging | `mise run package` | passed: JAR manifest/content checks for all series |
@@ -69,7 +69,7 @@ of the snapshot (`TEST-*.xml`, `blackbox/TEST-blackbox-<series>.xml`, `blackbox/
 | Staleness | `SubmitIT.staleSourceBlocksSubmit`, `pushAfterMergeNeverAddsPatchSetToMergedChange` | |
 | Cleanup | `SubmitIT.cleanup*`, black-box `test_submit_adds_one_commit_and_cleans_up` | |
 | Lifecycle | `LifecycleIT`, `SubmitIT.branchReuseAfterSubmitRequiresTargetBasedHistory` | |
-| Runtime | black-box `test_z_restart_keeps_association`, `test_zz_plugin_reload_keeps_working` | The reload test found a real defect (duplicate metric registration on hot reload), fixed with `Gerrit-ReloadMode: restart`. Queue limits (`maxQueued`) not exercised |
+| Runtime | black-box `test_z_restart_keeps_association`, `test_zz_plugin_reload_keeps_working` | The reload test found a real defect (duplicate metric registration on hot reload), fixed with `Gerrit-ReloadMode: restart`. Queue limits: `RecoveryIT.queueLimitAppliesToAllTasksAndReservesRoomForPushes` |
 | Compatibility | full matrix above | |
 | Tooling | clean-clone path, hooks, validators, packaging | |
 | Releases | release fixtures, release simulation | Publication not run |

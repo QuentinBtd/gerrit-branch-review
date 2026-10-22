@@ -1,3 +1,6 @@
 load("//tools/bazel:tests.bzl", "unit_tests")
 
-unit_tests(srcs = glob(["*Test.java"]))
+unit_tests(
+    srcs = glob(["*Test.java"]),
+    deps = ["//src/test/java/com/google/gerrit/sshd:split_for_tests"],
+)

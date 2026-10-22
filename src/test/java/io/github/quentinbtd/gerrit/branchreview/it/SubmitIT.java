@@ -102,6 +102,31 @@ public class SubmitIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void manualSyncRefreshesAMovedTarget() throws Exception {
+    enable();
+    setSubmitType(SubmitType.MERGE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = pushFeature(repo, 2);
+    int n = onlyChange();
+    RevCommit other = serverCommit(MASTER, "other.txt", "other\n");
+    String out =
+        syncViaRest(
+            user, FEATURE, new io.github.quentinbtd.gerrit.branchreview.api.PostSync.Input());
+    assertThat(out).contains("\"result\":\"updated\"");
+    var c = change(n);
+    assertThat(c.revisions).hasSize(2);
+    assertThat(c.revisions.get(c.currentRevision).commit.parents.get(0).commit)
+        .isEqualTo(other.name());
+    // The source did not change and a second sync is a no-op.
+    assertThat(
+            syncViaRest(
+                user, FEATURE, new io.github.quentinbtd.gerrit.branchreview.api.PostSync.Input()))
+        .contains("\"result\":\"noop\"");
+    approveAndSubmit(n);
+    assertOneContributionCommit(other, tip);
+  }
+
+  @Test
   public void mergeAlwaysIsBlocked() throws Exception {
     enable();
     setSubmitType(SubmitType.MERGE_ALWAYS);

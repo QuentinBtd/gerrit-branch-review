@@ -4,6 +4,7 @@
 package io.github.quentinbtd.gerrit.branchreview.it;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.common.RawInputUtil;
@@ -19,6 +20,10 @@ import org.junit.Test;
 
 public class StateAndTextIT extends AbstractBranchReviewIT {
   private static final String FEATURE = "refs/heads/feature/text-and-state";
+
+  @com.google.inject.Inject
+  private com.google.gerrit.acceptance.ExtensionRegistry extensionRegistry;
+
   private TestRepository<InMemoryRepository> repo;
   private int number;
 
@@ -336,6 +341,80 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     var rev = org.eclipse.jgit.lib.ObjectId.fromString(change(number).currentRevision);
     assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("a content 1\n");
     assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  @Test
+  public void acceptDivergenceWorksWithoutAnInterveningPush() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    var before = refValue(FEATURE);
+    PostSync.Input in = new PostSync.Input();
+    in.acceptDivergence = true;
+    String out = syncViaRest(user, FEATURE, in);
+    ChangeInfo c = change(number);
+    assertWithMessage(out).that(c.revisions).hasSize(3);
+    assertThat(c.revisions.get(c.currentRevision)._number).isEqualTo(3);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(c.currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("a content 1\n");
+    assertThat(refValue(FEATURE)).isEqualTo(before);
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  /** Rejects commits on source branches whose tree contains a "FORBIDDEN" file content. */
+  private static final class ForbiddenContentValidator
+      implements com.google.gerrit.server.git.validators.CommitValidationListener {
+    @Override
+    public java.util.List<com.google.gerrit.server.git.validators.CommitValidationMessage>
+        onCommitReceived(com.google.gerrit.server.events.CommitReceivedEvent e)
+            throws com.google.gerrit.server.git.validators.CommitValidationException {
+      if (!e.refName.startsWith("refs/heads/feature/")) {
+        return java.util.List.of();
+      }
+      try (var tw =
+          org.eclipse.jgit.treewalk.TreeWalk.forPath(
+              e.revWalk.getObjectReader(), "a/file1.txt", e.commit.getTree())) {
+        if (tw != null
+            && new String(
+                    e.revWalk.getObjectReader().open(tw.getObjectId(0)).getBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8)
+                .contains("FORBIDDEN")) {
+          throw new com.google.gerrit.server.git.validators.CommitValidationException(
+              "forbidden content on feature branches");
+        }
+      } catch (java.io.IOException ex) {
+        throw new com.google.gerrit.server.git.validators.CommitValidationException("io", ex);
+      }
+      return java.util.List.of();
+    }
+  }
+
+  @Test
+  public void editRejectedByBranchValidationIsNotWritten() throws Exception {
+    var before = refValue(FEATURE);
+    try (var reg = extensionRegistry.newRegistration().add(new ForbiddenContentValidator())) {
+      // The same validator rejects a normal push of that content ...
+      var local = repo.getRevWalk().parseCommit(before);
+      repo.reset(local);
+      repo.branch("HEAD")
+          .commit()
+          .author(user.newIdent())
+          .committer(user.newIdent())
+          .message("forbidden")
+          .add("a/file1.txt", "FORBIDDEN\n")
+          .create();
+      PushResult r = push(repo, "HEAD:" + FEATURE, false);
+      assertThat(r.getRemoteUpdate(FEATURE).getStatus())
+          .isNotEqualTo(org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK);
+      // ... and therefore also the same content arriving through a Gerrit edit.
+      editInGerrit("a/file1.txt", "FORBIDDEN\n");
+      waitFor(() -> lifecycle(FEATURE).syncState == Lifecycle.SyncState.DIVERGED);
+      assertThat(refValue(FEATURE)).isEqualTo(before);
+      repo.reset(local);
+      commits(repo, "b", 1);
+      PushResult r2 = push(repo, FEATURE);
+      assertThat(joined(r2)).contains("the branch's validation rejected it");
+      assertThat(joined(r2)).contains("forbidden content on feature branches");
+    }
   }
 
   @Test

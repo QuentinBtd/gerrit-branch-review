@@ -174,6 +174,14 @@ public class SubmitGuard implements MergeValidationListener {
                   + (lc.lastError == null ? "" : ": " + lc.lastError)
                   + "); the current patch set does not represent it");
     }
+    if (lc.syncState == Lifecycle.SyncState.SOURCE_DELETED && repo.exactRef(lc.sourceRef) != null) {
+      // The branch was recreated: the retained review no longer belongs to the live branch.
+      throw new MergeValidationException(
+          "branch-review: "
+              + lc.sourceRef
+              + " was deleted and recreated; this Change belongs to the previous branch. Abandon"
+              + " it, or continue it explicitly with branch-review sync --resume");
+    }
     if (lc.syncState == Lifecycle.SyncState.SYNCED) {
       Ref src = repo.exactRef(lc.sourceRef);
       if (src == null || !src.getObjectId().name().equals(lc.lastSourceId)) {

@@ -30,7 +30,8 @@ import org.eclipse.jgit.lib.Repository;
  * Periodically retries work that was accepted but not completed: unresolved reservations, failed
  * synchronizations and pending cleanups. Runs once shortly after start (crash/restart recovery) and
  * then every {@code recoveryIntervalSeconds}. Retries act as the last pushing user, so a retry can
- * never do more than that user's original push was allowed to do.
+ * never do more than that user's original push was allowed to do. Recovery work is admitted as
+ * background work (see {@link SyncExecutor.Priority}); what does not fit waits for the next pass.
  */
 @Singleton
 public class RecoveryService implements LifecycleListener {
@@ -115,7 +116,8 @@ public class RecoveryService implements LifecycleListener {
                   lc.sourceRef,
                   Account.id(lc.lastActor),
                   SyncService.Trigger.RECOVERY,
-                  SyncService.Options.NONE);
+                  SyncService.Options.NONE,
+                  SyncExecutor.Priority.BACKGROUND);
             }
           } else if (lc.status == Lifecycle.Status.MERGED
               && lc.merge != null
@@ -124,14 +126,18 @@ public class RecoveryService implements LifecycleListener {
                       && lc.merge.cleanupAttempts < settings.maxAttempts()))) {
             backlog++;
             int change = lc.changeNumber;
-            executor.execute(() -> mergeHandler.handleMerged(project, change, 0, null));
+            executor.execute(
+                () -> mergeHandler.handleMerged(project, change, 0, null),
+                SyncExecutor.Priority.BACKGROUND);
           } else if (lc.status == Lifecycle.Status.ACTIVE
               && lc.merge == null
               && lc.changeNumber > 0
               && lc.syncState == Lifecycle.SyncState.SYNCED) {
             // A merge event may have been missed (e.g. restart during submit): reconcile.
             int change = lc.changeNumber;
-            executor.execute(() -> mergeHandler.handleMerged(project, change, 0, null));
+            executor.execute(
+                () -> mergeHandler.handleMerged(project, change, 0, null),
+                SyncExecutor.Priority.BACKGROUND);
           }
         }
       } catch (IOException | RuntimeException e) {

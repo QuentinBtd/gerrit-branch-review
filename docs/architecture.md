@@ -67,14 +67,14 @@ Supported topology: one primary Gerrit server. Replicas only receive the replica
 | --- | --- |
 | First non-empty push of an eligible branch | New lifecycle, new WIP Change targeting `targetBranch` |
 | Branch updated, Change open | New patch set on the same Change after permission checks |
-| Identical retry / equivalent content | No new patch set; association reported |
+| Identical retry / equivalent content | No new patch set; association reported. A manual `branch-review sync` still refreshes the Change when the target moved, and `--accept-divergence` always replaces a human patch set |
 | Branch has no net change (initial) | No Change created |
 | Branch has no net change (existing Change) | State `EMPTY`; current patch set is reported as not representing the branch and Submit is blocked |
 | Conflict with target / unrelated history / over limit | State `CONFLICT`/`UNSUPPORTED`; Submit blocked; push explains |
 | Change abandoned | Not restored. Restore it and push/sync again, or `sync --new-lifecycle` for a new Change |
 | Change merged | Lifecycle closed; never receives patch sets again |
-| Source deleted | `SOURCE_DELETED`; Change and history kept |
-| Same name pushed again after deletion | Refused until the old Change is abandoned (then a new lifecycle) or `sync --resume` continues it |
+| Source deleted | `SOURCE_DELETED`; Change and history kept; it can still be submitted while the branch is absent |
+| Same name pushed again after deletion | Refused until the old Change is abandoned (then a new lifecycle) or `sync --resume` continues it; Submit of the old Change is blocked while the recreated branch exists |
 | Rename | Deletion of the old name plus a new lifecycle for the new name |
 | Reuse after Submit | Accepted only if the submitted commit is in the new history (branch recreated from or merged with the target); otherwise refused with instructions |
 | `targetBranch` changed while a lifecycle is active | `BLOCKED`; the Change keeps its original target; abandon + `--new-lifecycle` or revert the config |
@@ -123,7 +123,10 @@ contain it, so applying the branch again would erase it. With `syncEditsToBranch
 4. If the branch already contains the edit, nothing is written. Otherwise one commit
    `Apply review edits from Change N patch set k` is created on top of the tip (fast-forward),
    authored and committed by the uploader, and the branch ref is updated with a
-   compare-and-swap on the tip that was read. The uploader must hold push permission on the
+   compare-and-swap on the tip that was read. The commit and ref update go through the same
+   validation as a direct push of that branch by the uploader (commit validators, including
+   plugin validators, and ref operation validators); a rejection keeps the pause with the
+   validator's message. The uploader must hold push permission on the
    branch; the plugin grants nothing.
 5. The lifecycle then treats the published patch set as its own. If the branch tip and target
    are unchanged no new patch set appears; after a push the new patch set contains both.
@@ -148,7 +151,9 @@ resumes automatically as soon as a pushed branch contains the edit; alternativel
 `branch-review sync --accept-divergence` keeps the branch as it is (the edit stays visible in its
 patch set). Note that `git push -f` that turns out to be a fast-forward is not a force push. With
 `syncEditsToBranch = false` the plugin never writes the branch and resumes only after
-`branch-review sync --accept-divergence`. Repair commands in messages show this server's real SSH
+`branch-review sync --accept-divergence`. Repair commands are quoted for the local shell and for
+Gerrit's SSH command parser, so project and branch names are always passed as single arguments.
+They show this server's real SSH
 address (`sshd.advertisedAddress`, else `sshd.listenAddress` with the canonical web host), or the
 REST call when SSH is disabled.
 

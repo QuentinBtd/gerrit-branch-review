@@ -91,6 +91,33 @@ public class LifecycleIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void recreatedBranchCannotSubmitTheOldReview() throws Exception {
+    push(repo, ":" + FEATURE, true);
+    repo.reset(refValue("refs/heads/master"));
+    commits(repo, "different", 1);
+    push(repo, FEATURE);
+    var api = gApi.changes().id(project.get(), number);
+    api.setReadyForReview();
+    api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    var e =
+        com.google.gerrit.testing.GerritJUnit.assertThrows(
+            com.google.gerrit.extensions.restapi.ResourceConflictException.class,
+            () -> api.current().submit());
+    assertThat(e).hasMessageThat().contains("was deleted and recreated");
+    assertThat(change(number).status).isEqualTo(ChangeStatus.NEW);
+  }
+
+  @Test
+  public void deletedBranchCanStillSubmitItsReview() throws Exception {
+    push(repo, ":" + FEATURE, true);
+    var api = gApi.changes().id(project.get(), number);
+    api.setReadyForReview();
+    api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    api.current().submit();
+    assertThat(change(number).status).isEqualTo(ChangeStatus.MERGED);
+  }
+
+  @Test
   public void renameIsDeletionPlusCreation() throws Exception {
     RevCommit tip = repo.getRevWalk().parseCommit(refValue(FEATURE));
     push(repo, ":" + FEATURE, true);

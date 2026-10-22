@@ -70,6 +70,32 @@ public class SyncExecutor implements LifecycleListener {
     }
   }
 
+  /**
+   * Admission class. Every task counts against {@code maxQueued}; background work (recovery) is
+   * only admitted while at most half of it is used, so that a large recovery pass can never fill
+   * the queue and turn pushes away.
+   */
+  public enum Priority {
+    FOREGROUND,
+    BACKGROUND
+  }
+
+  private boolean admit(Priority priority) {
+    int limit =
+        priority == Priority.FOREGROUND
+            ? settings.maxQueued()
+            : Math.max(1, settings.maxQueued() / 2);
+    while (true) {
+      int n = inFlight.get();
+      if (n >= limit) {
+        return false;
+      }
+      if (inFlight.compareAndSet(n, n + 1)) {
+        return true;
+      }
+    }
+  }
+
   /** Submits a sync; empty when the queue is full or the plugin is stopping. */
   public Optional<CompletableFuture<SyncResult>> submit(
       Project.NameKey project,
@@ -77,9 +103,18 @@ public class SyncExecutor implements LifecycleListener {
       Account.Id actor,
       SyncService.Trigger trigger,
       SyncService.Options opts) {
+    return submit(project, ref, actor, trigger, opts, Priority.FOREGROUND);
+  }
+
+  public Optional<CompletableFuture<SyncResult>> submit(
+      Project.NameKey project,
+      String ref,
+      Account.Id actor,
+      SyncService.Trigger trigger,
+      SyncService.Options opts,
+      Priority priority) {
     ScheduledExecutorService p = pool;
-    if (p == null || inFlight.incrementAndGet() > settings.maxQueued()) {
-      inFlight.decrementAndGet();
+    if (p == null || !admit(priority)) {
       return Optional.empty();
     }
     CompletableFuture<SyncResult> f = new CompletableFuture<>();
@@ -105,14 +140,29 @@ public class SyncExecutor implements LifecycleListener {
 
   /** Runs a task (e.g. cleanup) on the plugin pool. Returns false if it was not accepted. */
   public boolean execute(Runnable r) {
+    return execute(r, Priority.FOREGROUND);
+  }
+
+  /** As {@link #execute(Runnable)}, subject to the admission limit of {@code priority}. */
+  public boolean execute(Runnable r, Priority priority) {
     ScheduledExecutorService p = pool;
-    if (p == null) {
+    if (p == null || !admit(priority)) {
       return false;
     }
     try {
-      p.execute(r);
+      p.execute(
+          () -> {
+            try {
+              r.run();
+            } catch (RuntimeException e) {
+              log.atSevere().withCause(e).log("branch-review task failed");
+            } finally {
+              inFlight.decrementAndGet();
+            }
+          });
       return true;
     } catch (RuntimeException e) {
+      inFlight.decrementAndGet();
       return false;
     }
   }

@@ -17,7 +17,8 @@ every Submit attempt and, for Changes linked to a lifecycle of an enabled projec
 - accepts `MERGE_IF_NECESSARY` only when the patch set's parent is the current target tip
   (fast-forward); otherwise asks for a rebase;
 - rejects `MERGE_ALWAYS`;
-- requires the lifecycle to be `SYNCED` (or `SOURCE_DELETED`), the source ref to still point at
+- requires the lifecycle to be `SYNCED` (or `SOURCE_DELETED` while the branch is absent; a
+  recreated branch blocks Submit), the source ref to still point at
   the synchronized source commit, and the submitted patch set to be the generated one or a
   message-only edit / pure Gerrit rebase of it.
 

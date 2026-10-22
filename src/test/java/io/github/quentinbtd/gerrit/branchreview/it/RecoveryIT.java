@@ -173,6 +173,50 @@ public class RecoveryIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.threads",
+      value = "1")
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.maxQueued",
+      value = "4")
+  public void queueLimitAppliesToAllTasksAndReservesRoomForPushes() throws Exception {
+    var executor =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var ran = new java.util.concurrent.atomic.AtomicInteger();
+    Runnable blocked =
+        () -> {
+          try {
+            release.await();
+            ran.incrementAndGet();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        };
+    var bg = io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.Priority.BACKGROUND;
+    int background = 0;
+    for (int i = 0; i < 10; i++) {
+      if (executor.execute(blocked, bg)) {
+        background++;
+      }
+    }
+    int foreground = 0;
+    for (int i = 0; i < 10; i++) {
+      if (executor.execute(blocked)) {
+        foreground++;
+      }
+    }
+    assertThat(background).isEqualTo(2);
+    assertThat(foreground).isEqualTo(2);
+    assertThat(executor.execute(blocked)).isFalse();
+    release.countDown();
+    waitFor(() -> ran.get() == 4);
+    waitFor(() -> executor.execute(() -> {}));
+  }
+
+  @Test
   public void concurrentSynchronizationCreatesOneChange() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(user);

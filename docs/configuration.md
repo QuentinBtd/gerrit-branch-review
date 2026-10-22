@@ -91,7 +91,7 @@ Effects of changes:
     maxCommits = 2000             # contribution commits per synchronization (1..100000)
     pushWaitSeconds = 60          # how long a push waits for results (1..600)
     threads = 2                   # worker threads
-    maxQueued = 200               # queued synchronizations before "server busy"
+    maxQueued = 200               # queued tasks before "server busy"; recovery uses at most half
     recoveryIntervalSeconds = 300 # periodic recovery; 0 = only once after start
     maxAttempts = 5               # automatic retries per failure
 ```

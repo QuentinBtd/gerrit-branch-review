@@ -28,7 +28,12 @@ string_flag(
 
 java_library(
     name = "branch_review_lib",
-    srcs = glob(["src/main/java/**/*.java"]),
+    # The only version-specific source: the validator selection API differs in 3.14.
+    srcs = glob(["src/main/java/**/*.java"]) + select({
+        ":gerrit_3_12": glob(["src/main/compat/with-ssh-info/**/*.java"]),
+        ":gerrit_3_13": glob(["src/main/compat/with-ssh-info/**/*.java"]),
+        ":gerrit_3_14": glob(["src/main/compat/without-ssh-info/**/*.java"]),
+    }),
     resources = glob(["src/main/resources/**/*"]) + ["LICENSE"],
     deps = ["//lib:plugin_api"],
 )

@@ -6,9 +6,12 @@ package io.github.quentinbtd.gerrit.branchreview.sync;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.hash.Hashing;
 import com.google.common.util.concurrent.Striped;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -23,9 +26,15 @@ import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.config.UrlFormatter;
+import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidators;
+import com.google.gerrit.server.git.validators.RefOperationValidationException;
+import com.google.gerrit.server.git.validators.RefOperationValidators;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.patch.DiffOperationsForCommitValidation;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -36,6 +45,7 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
+import com.google.gerrit.server.update.RepoView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType;
@@ -43,6 +53,7 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.github.quentinbtd.gerrit.branchreview.Metrics;
+import io.github.quentinbtd.gerrit.branchreview.compat.Validators;
 import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
 import io.github.quentinbtd.gerrit.branchreview.config.ProjectConfigLoader;
 import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
@@ -61,8 +72,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -79,6 +92,7 @@ import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.merge.ThreeWayMerger;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
 
 /**
  * Synchronizes one source branch to its review Change.
@@ -134,6 +148,9 @@ public class SyncService {
   private final CommandHints hints;
   private final IdentifiedUser.GenericFactory userFactory;
   private final GitReferenceUpdated gitRefUpdated;
+  private final CommitValidators.Factory commitValidatorsFactory;
+  private final RefOperationValidators.Factory refValidatorsFactory;
+  private final DiffOperationsForCommitValidation.Factory diffOperationsFactory;
   private final Striped<Lock> locks = Striped.lazyWeakLock(1024);
 
   @Inject
@@ -153,7 +170,13 @@ public class SyncService {
       Metrics metrics,
       CommandHints hints,
       IdentifiedUser.GenericFactory userFactory,
-      GitReferenceUpdated gitRefUpdated) {
+      GitReferenceUpdated gitRefUpdated,
+      CommitValidators.Factory commitValidatorsFactory,
+      RefOperationValidators.Factory refValidatorsFactory,
+      DiffOperationsForCommitValidation.Factory diffOperationsFactory) {
+    this.commitValidatorsFactory = commitValidatorsFactory;
+    this.refValidatorsFactory = refValidatorsFactory;
+    this.diffOperationsFactory = diffOperationsFactory;
     this.hints = hints;
     this.userFactory = userFactory;
     this.gitRefUpdated = gitRefUpdated;
@@ -369,7 +392,8 @@ public class SyncService {
                   + lc.changeNumber
                   + " is still open; abandon it before starting a new lifecycle");
         }
-        return update(repo, ins, rw, project, cfg, lc, stateId, notes, sourceId, user, opts);
+        return update(
+            repo, ins, rw, project, cfg, lc, stateId, notes, sourceId, user, trigger, opts);
       }
       return create(repo, ins, rw, project, sourceRef, cfg, lc, stateId, sourceId, user);
     }
@@ -480,7 +504,7 @@ public class SyncService {
             sourceRef, cfg.matchingPattern(sourceRef).orElse(null), plan.commits());
     TextOwnership.Result text =
         TextOwnership.next(null, TextOwnership.State.initial(), gen, lc.changeKey);
-    ObjectId commit = insertCommit(ins, rw, plan, text.message(), user);
+    ObjectId commit = insertCommit(ins, rw, plan, text.message(), user, null);
     ins.flush();
 
     int number = sequences.nextChangeId();
@@ -528,11 +552,13 @@ public class SyncService {
       ChangeNotes notes,
       ObjectId sourceId,
       IdentifiedUser user,
+      Trigger trigger,
       Options opts)
       throws IOException, ConcurrentUpdateException, PermissionBackendException {
     List<String> extra = new ArrayList<>();
     SyncResult r =
-        doUpdate(repo, ins, rw, project, cfg, lc, stateId, notes, sourceId, user, opts, extra);
+        doUpdate(
+            repo, ins, rw, project, cfg, lc, stateId, notes, sourceId, user, trigger, opts, extra);
     return extra.isEmpty() ? r : r.withExtraDetails(extra);
   }
 
@@ -547,6 +573,7 @@ public class SyncService {
       ChangeNotes notes,
       ObjectId sourceId,
       IdentifiedUser user,
+      Trigger trigger,
       Options opts,
       List<String> extra)
       throws IOException, ConcurrentUpdateException, PermissionBackendException {
@@ -680,9 +707,19 @@ public class SyncService {
       }
     }
 
+    // Nothing changed on the source side. An explicit repair still recomputes when it accepts a
+    // divergence (the human patch set must be replaced) or, for a manual sync, when the target
+    // moved (so that the Change can be refreshed without a dummy source commit).
+    Ref currentTarget = repo.exactRef(lc.targetRef);
+    boolean targetMoved =
+        trigger == Trigger.MANUAL
+            && currentTarget != null
+            && !currentTarget.getObjectId().name().equals(lc.lastTargetId);
     if (sourceId.name().equals(lc.lastSourceId)
         && lc.syncState == SyncState.SYNCED
-        && !opts.resetText()) {
+        && !opts.resetText()
+        && !opts.acceptDivergence()
+        && !targetMoved) {
       return result(
           SyncResult.Kind.NOOP,
           project,
@@ -772,7 +809,18 @@ public class SyncService {
               withFooters(text.message(), currentCommit.getFullMessage(), lc.changeKey),
               text.state());
     }
-    ObjectId commit = insertCommit(ins, rw, plan, text.message(), user);
+    ObjectId commit = insertCommit(ins, rw, plan, text.message(), user, null);
+    // Going back to the content of an older patch set (e.g. after accepting a divergence): a patch
+    // set must not reuse an earlier patch set's commit, so move the committer time forward until
+    // the commit is new (identities have one-second resolution).
+    Set<ObjectId> used = new HashSet<>();
+    notes.getPatchSets().values().forEach(ps -> used.add(ps.commitId()));
+    used.remove(current.commitId());
+    Instant when = TimeUtil.now();
+    while (used.contains(commit)) {
+      commit = insertCommit(ins, rw, plan, text.message(), user, when);
+      when = when.plusSeconds(1);
+    }
     ins.flush();
     if (commit.equals(current.commitId())) {
       lc.lastSourceId = sourceId.name();
@@ -1016,6 +1064,59 @@ public class SyncService {
     }
   }
 
+  /**
+   * Runs the checks Gerrit applies to a direct push of {@code commit} to {@code ref} by {@code
+   * user}: commit validators for branch pushes (including plugin validators) and ref operation
+   * validators. Returns the rejection message, if any.
+   */
+  private Optional<String> validateBranchUpdate(
+      Repository repo,
+      ObjectInserter ins,
+      RevWalk rw,
+      Project.NameKey project,
+      String ref,
+      ObjectId oldId,
+      ObjectId commit,
+      IdentifiedUser user)
+      throws IOException {
+    ProjectState state =
+        projectCache.get(project).orElseThrow(() -> new IOException("project gone: " + project));
+    ReceiveCommand cmd = new ReceiveCommand(oldId, commit, ref, ReceiveCommand.Type.UPDATE);
+    // RepoView holds a ref cache with its own reference on the repository: close it.
+    try (RepoView view = new RepoView(repo, rw, ins);
+        CommitReceivedEvent event =
+            new CommitReceivedEvent(
+                cmd,
+                state.getProject(),
+                ref,
+                ImmutableListMultimap.of(),
+                repo.getConfig(),
+                rw.getObjectReader(),
+                commit,
+                user,
+                diffOperationsFactory.create(view, ins))) {
+      Validators.forBranchPush(
+              commitValidatorsFactory,
+              permissionBackend.user(user).project(project),
+              BranchNameKey.create(project, ref),
+              user,
+              rw)
+          .validate(event);
+    } catch (CommitValidationException e) {
+      return Optional.of(e.getFullMessage());
+    }
+    try {
+      refValidatorsFactory
+          .create(state.getProject(), user, cmd, ImmutableListMultimap.of())
+          .validateForRefOperation();
+    } catch (RefOperationValidationException e) {
+      StringBuilder msg = new StringBuilder(String.valueOf(e.getMessage()));
+      e.getMessages().forEach(m -> msg.append("; ").append(m.getMessage()));
+      return Optional.of(msg.toString());
+    }
+    return Optional.empty();
+  }
+
   /** Whether the source no longer descends from the last synchronized source state. */
   private static boolean historyRewritten(RevWalk rw, Lifecycle lc, ObjectId sourceId)
       throws IOException {
@@ -1118,6 +1219,11 @@ public class SyncService {
             + " by branch-review.\n");
     ObjectId commit = ins.insert(cb);
     ins.flush();
+    Optional<String> rejected =
+        validateBranchUpdate(repo, ins, rw, project, lc.sourceRef, tip, commit, editor);
+    if (rejected.isPresent()) {
+      return EditBackport.refused("the branch's validation rejected it: " + rejected.get());
+    }
     RefUpdate ru = repo.updateRef(lc.sourceRef);
     ru.setExpectedOldObjectId(tip);
     ru.setNewObjectId(commit);
@@ -1153,12 +1259,19 @@ public class SyncService {
   // Helpers
 
   private ObjectId insertCommit(
-      ObjectInserter ins, RevWalk rw, SquashPlanner.Plan plan, String message, IdentifiedUser user)
+      ObjectInserter ins,
+      RevWalk rw,
+      SquashPlanner.Plan plan,
+      String message,
+      IdentifiedUser user,
+      @Nullable Instant when)
       throws IOException {
     RevCommit tip = rw.parseCommit(plan.sourceId());
     PersonIdent tipIdent = tip.getCommitterIdent();
-    // Deterministic: the same source state, target and text always yield the same commit.
-    PersonIdent ident = user.newCommitterIdent(tipIdent.getWhenAsInstant(), tipIdent.getZoneId());
+    // Deterministic by default: the same source state, target and text yield the same commit.
+    PersonIdent ident =
+        user.newCommitterIdent(
+            when != null ? when : tipIdent.getWhenAsInstant(), tipIdent.getZoneId());
     CommitBuilder cb = new CommitBuilder();
     cb.setTreeId(plan.treeId());
     cb.setParentId(plan.targetId());
