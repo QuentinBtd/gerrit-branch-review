@@ -77,6 +77,7 @@ Supported topology: one primary Gerrit server. Replicas only receive the replica
 | Same name pushed again after deletion | Refused until the old Change is abandoned (then a new lifecycle) or `sync --resume` continues it; Submit of the old Change is blocked while the recreated branch exists |
 | Rename | Deletion of the old name plus a new lifecycle for the new name |
 | Reuse after Submit | Accepted only if the submitted commit is in the new history (branch recreated from or merged with the target); otherwise refused with instructions |
+| Change moved to another branch in Gerrit | `BLOCKED`; Submit is refused; moving it back resumes synchronization |
 | `targetBranch` changed while a lifecycle is active | `BLOCKED`; the Change keeps its original target; abandon + `--new-lifecycle` or revert the config |
 | Patterns changed so the branch no longer matches | Not synchronized, reported; nothing moves |
 | Mapping inconsistent | `BLOCKED`; automatic mutation stops; diagnose with `status` |
@@ -191,6 +192,17 @@ logged. Metrics (`plugins/branch-review/...`):
 | `sync_results` | counter | `result`: created, updated, noop, not_synchronized, source_deleted, failed, in_progress |
 | `cleanup_results` | counter | `result`: deleted, skipped, failed |
 | `retry_backlog` | gauge | lifecycles awaiting retry or cleanup at the last recovery pass |
+
+## Recovery
+
+A recovery pass (shortly after start, then every `recoveryIntervalSeconds`) looks at every
+lifecycle of enabled projects. Active lifecycles whose Change was merged without the plugin
+noticing (missed event, full queue, restart during Submit) are reconciled; the submitter is then
+taken from Gerrit's stored submit record so that cleanup keeps working. Failed synchronizations
+are retried as the last pushing user, and pending cleanups are retried. Healthy lifecycles are
+checked in the pass itself and cost no queue capacity. Work is admitted as background work
+(at most half of `maxQueued`) in a stable order that resumes after the last admitted item, so
+every lifecycle is eventually reached even when capacity is short.
 
 ## Plugin reload and restart
 

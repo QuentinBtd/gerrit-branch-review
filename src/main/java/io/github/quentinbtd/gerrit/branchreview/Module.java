@@ -13,6 +13,7 @@ import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.server.git.ReceivePackInitializer;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.MergeValidationListener;
+import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.git.validators.RefOperationValidationListener;
 import io.github.quentinbtd.gerrit.branchreview.api.GetStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.PostSync;
@@ -35,6 +36,7 @@ public class Module extends LifecycleModule {
     DynamicSet.bind(binder(), CommitValidationListener.class).to(ConfigValidator.class);
     DynamicSet.bind(binder(), RefOperationValidationListener.class).to(StateRefProtector.class);
     DynamicSet.bind(binder(), MergeValidationListener.class).to(SubmitGuard.class);
+    DynamicSet.bind(binder(), OnSubmitValidationListener.class).to(SubmitGuard.class);
     DynamicSet.bind(binder(), ChangeMergedListener.class).to(MergeHandler.class);
     DynamicSet.bind(binder(), RevisionCreatedListener.class).to(EditListener.class);
     listener().to(SyncExecutor.class);

@@ -217,6 +217,41 @@ public class RecoveryIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.threads",
+      value = "1")
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.maxQueued",
+      value = "2")
+  public void healthyReviewsDoNotStarveFailedOnes() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    // Many healthy lifecycles sorted before the failed one ("refs/heads/feature/a..").
+    for (String name : new String[] {"aa", "ab", "ac"}) {
+      repo.reset(refValue("refs/heads/master"));
+      commits(repo, name, 1);
+      push(repo, "refs/heads/feature/" + name);
+    }
+    repo.reset(refValue("refs/heads/master"));
+    commits(repo, "z", 1);
+    FailingValidator v = new FailingValidator();
+    String failed = "refs/heads/feature/zz";
+    try (Registration reg = extensionRegistry.newRegistration().add(v)) {
+      push(repo, failed);
+    }
+    try (Repository r = repoManager.openRepository(project)) {
+      StateStore.Loaded<Lifecycle> l = stateStore.loadLifecycle(r, failed);
+      l.value().attempts = 1;
+      l.value().nextAttemptAfter = null;
+      stateStore.saveLifecycle(r, project, l.value(), l.refId(), "test");
+    }
+    // One background slot (maxQueued 2 / 2): it must go to the failed lifecycle.
+    plugin.getSysInjector().getInstance(RecoveryService.class).runOnce();
+    waitFor(() -> lifecycle(failed).syncState == Lifecycle.SyncState.SYNCED);
+    assertThat(changes()).hasSize(4);
+  }
+
+  @Test
   public void concurrentSynchronizationCreatesOneChange() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(user);

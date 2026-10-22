@@ -143,6 +143,32 @@ public class LifecycleIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void movedChangeStopsSynchronizationAndSubmit() throws Exception {
+    serverCommit("refs/heads/stable", "s.txt", "s\n");
+    gApi.changes().id(project.get(), number).move("stable");
+    commits(repo, "b", 1);
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("was moved from refs/heads/master to refs/heads/stable");
+    assertThat(change(number).revisions).hasSize(1);
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.BLOCKED);
+    var api = gApi.changes().id(project.get(), number);
+    api.setReadyForReview();
+    api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    var e =
+        com.google.gerrit.testing.GerritJUnit.assertThrows(
+            com.google.gerrit.extensions.restapi.ResourceConflictException.class,
+            () -> api.current().submit());
+    assertThat(e).hasMessageThat().contains("this Change targets refs/heads/stable");
+
+    // Moving it back resumes synchronization.
+    api.move("master");
+    syncViaRest(user, FEATURE, new PostSync.Input());
+    assertThat(change(number).revisions).hasSize(2);
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  @Test
   public void patternChangeDoesNotMoveOrDuplicate() throws Exception {
     setConfig(DEFAULT_CONFIG.replace("sourceBranchPattern = refs/heads/feature/*\n", ""));
     commits(repo, "b", 1);

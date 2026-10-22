@@ -179,7 +179,8 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     var before = sourceTip();
     editInGerrit("a/file1.txt", "edited in UI\n");
     waitFor(() -> !refValue(FEATURE).equals(before));
-    waitFor(() -> lifecycle(FEATURE).syncState == Lifecycle.SyncState.SYNCED);
+    // SYNCED alone may still describe the previous tip while the worker saves the new state.
+    waitFor(() -> refValue(FEATURE).name().equals(lifecycle(FEATURE).lastSourceId));
 
     var tip = sourceTip();
     assertThat(tip.getParentCount()).isEqualTo(1);

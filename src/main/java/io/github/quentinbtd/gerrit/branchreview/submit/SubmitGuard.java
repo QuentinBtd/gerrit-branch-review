@@ -11,11 +11,14 @@ import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
+import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.MergeValidationException;
 import com.google.gerrit.server.git.validators.MergeValidationListener;
+import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
@@ -29,12 +32,14 @@ import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import io.github.quentinbtd.gerrit.branchreview.validation.ConfigValidator;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
 
 /**
  * Submit-time checks, run by Gerrit's normal Submit for every change about to be merged.
@@ -60,7 +65,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * lifecycle merged and is reported as not synchronized (see docs/architecture.md).
  */
 @Singleton
-public class SubmitGuard implements MergeValidationListener {
+public class SubmitGuard implements MergeValidationListener, OnSubmitValidationListener {
   private static final ImmutableSet<SubmitType> ONE_COMMIT_TYPES =
       ImmutableSet.of(
           SubmitType.FAST_FORWARD_ONLY,
@@ -73,6 +78,7 @@ public class SubmitGuard implements MergeValidationListener {
   private final ServerSettings settings;
   private final ChangeData.Factory changeDataFactory;
   private final ConfigValidator configValidator;
+  private final GitRepositoryManager repoManager;
 
   @Inject
   SubmitGuard(
@@ -80,7 +86,9 @@ public class SubmitGuard implements MergeValidationListener {
       ProjectConfigLoader configLoader,
       ServerSettings settings,
       ChangeData.Factory changeDataFactory,
-      ConfigValidator configValidator) {
+      ConfigValidator configValidator,
+      GitRepositoryManager repoManager) {
+    this.repoManager = repoManager;
     this.store = store;
     this.configLoader = configLoader;
     this.settings = settings;
@@ -127,11 +135,84 @@ public class SubmitGuard implements MergeValidationListener {
         throw new MergeValidationException(
             "branch-review: the mapping for this Change is inconsistent; run branch-review status");
       }
+      if (!dest.equals(lc.targetRef)) {
+        throw new MergeValidationException(
+            "branch-review: this Change targets "
+                + dest
+                + " but its branch review targets "
+                + lc.targetRef
+                + "; move it back, or abandon it and start a new lifecycle");
+      }
+      if (!cfg.targetBranch().equals(lc.targetRef)) {
+        throw new MergeValidationException(
+            "branch-review: targetBranch is now "
+                + cfg.targetBranch()
+                + " but this review targets "
+                + lc.targetRef
+                + "; restore the previous targetBranch, or abandon the Change and start a new"
+                + " lifecycle");
+      }
       checkSubmitType(repo, commit, dest);
       checkSynchronized(repo, rw, commit, lc);
     } catch (IOException e) {
       throw new MergeValidationException("branch-review: cannot read lifecycle state", e);
     }
+  }
+
+  /**
+   * Whole-batch check run just before Submit updates the target refs. The per-change check above
+   * cannot see other Changes submitted together (e.g. a topic): under {@code MERGE_IF_NECESSARY}
+   * the second of two reviews based on the same tip is merged with a merge commit. Reject any new
+   * merge commit that brings in a branch-review commit through a non-first parent.
+   */
+  @Override
+  public void preBranchUpdate(OnSubmitValidationListener.Arguments args)
+      throws ValidationException {
+    if (settings.emergencyDisabled() || !configLoader.load(args.getProject()).isEnabled()) {
+      return;
+    }
+    try (Repository repo = repoManager.openRepository(args.getProject())) {
+      RevWalk rw = args.getRevWalk();
+      for (ReceiveCommand cmd : args.getCommands().values()) {
+        if (!cmd.getRefName().startsWith("refs/heads/")
+            || cmd.getNewId().equals(ObjectId.zeroId())) {
+          continue;
+        }
+        rw.reset();
+        rw.markStart(rw.parseCommit(cmd.getNewId()));
+        if (!cmd.getOldId().equals(ObjectId.zeroId())) {
+          rw.markUninteresting(rw.parseCommit(cmd.getOldId()));
+        }
+        for (RevCommit c : rw) {
+          for (int i = 1; i < c.getParentCount(); i++) {
+            Optional<Integer> change = branchReviewChange(repo, c.getParent(i));
+            if (change.isPresent()) {
+              throw new ValidationException(
+                  "branch-review: Change "
+                      + change.get()
+                      + " would be merged into "
+                      + cmd.getRefName()
+                      + " with a merge commit. Submit it on its own (or rebase it), so that it"
+                      + " adds exactly one commit.");
+            }
+          }
+        }
+      }
+    } catch (IOException e) {
+      throw new ValidationException("branch-review: cannot inspect the submitted commits", e);
+    }
+  }
+
+  /** The number of the branch-review Change whose patch set is {@code commit}, if any. */
+  private Optional<Integer> branchReviewChange(Repository repo, ObjectId commit)
+      throws IOException {
+    for (Ref r : repo.getRefDatabase().getTipsWithSha1(commit)) {
+      PatchSet.Id ps = PatchSet.Id.fromRef(r.getName());
+      if (ps != null && store.loadLink(repo, ps.changeId().get()).exists()) {
+        return Optional.of(ps.changeId().get());
+      }
+    }
+    return Optional.empty();
   }
 
   private void checkSubmitType(Repository repo, CodeReviewCommit commit, String dest)

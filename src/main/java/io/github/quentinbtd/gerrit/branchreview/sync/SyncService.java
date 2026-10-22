@@ -602,6 +602,30 @@ public class SyncService {
               changeUrl(project, lc.changeNumber));
     }
 
+    String changeDest = notes.getChange().getDest().branch();
+    if (!changeDest.equals(lc.targetRef)) {
+      // Someone moved the Change: patch sets computed against the lifecycle target would be
+      // delivered to another branch.
+      lc.syncState = SyncState.BLOCKED;
+      lc.observedSourceId = sourceId.name();
+      lc.lastError =
+          "Change " + lc.changeNumber + " was moved from " + lc.targetRef + " to " + changeDest;
+      store.saveLifecycle(repo, project, lc, stateId, "change moved");
+      return SyncResult.of(
+              SyncResult.Kind.NOT_SYNCHRONIZED,
+              sourceRef,
+              lc.lastError + "; automatic synchronization stopped.",
+              "Move it back to "
+                  + lc.targetRef
+                  + ", or abandon it and start a new Change with: "
+                  + hints.sync(project, sourceRef, "--new-lifecycle"))
+          .withChange(
+              lc.changeNumber,
+              notes.getCurrentPatchSet().number(),
+              notes.getChange().isWorkInProgress(),
+              changeUrl(project, lc.changeNumber));
+    }
+
     try {
       permissionBackend.user(user).change(notes).check(ChangePermission.READ);
       permissionBackend.user(user).change(notes).check(ChangePermission.ADD_PATCH_SET);

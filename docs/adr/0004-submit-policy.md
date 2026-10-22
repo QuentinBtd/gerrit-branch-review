@@ -22,6 +22,16 @@ every Submit attempt and, for Changes linked to a lifecycle of an enabled projec
   the synchronized source commit, and the submitted patch set to be the generated one or a
   message-only edit / pure Gerrit rebase of it.
 
+- requires the Change to still target the lifecycle's target, and the configured `targetBranch`
+  to be unchanged (a configuration change blocks Submit immediately, not only at the next sync).
+
+Because the per-change listener cannot see other Changes submitted together (whole-topic
+Submit), an `OnSubmitValidationListener` additionally inspects every target ref update of the
+Submit just before it is applied and rejects any new merge commit that brings in a branch-review
+patch set through a non-first parent. Under `MERGE_IF_NECESSARY` two reviews based on the same
+tip must therefore be submitted separately (or rebased); rebase and cherry-pick types add one
+commit per review.
+
 The effective submit type comes from `ChangeData#submitTypeRecord()`, so per-project and rule
 based submit types are evaluated at Submit time. Project-wide settings are never changed.
 

@@ -126,6 +126,135 @@ public class SubmitIT extends AbstractBranchReviewIT {
     assertOneContributionCommit(other, tip);
   }
 
+  private int pushBranch(TestRepository<InMemoryRepository> repo, String ref, String prefix)
+      throws Exception {
+    repo.reset(refValue(MASTER));
+    commits(repo, prefix, 1);
+    assertOk(push(repo, ref), ref);
+    return lifecycle(ref).changeNumber;
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "change.submitWholeTopic",
+      value = "true")
+  public void topicSubmitThatWouldMergeIsRejected() throws Exception {
+    enable();
+    setSubmitType(SubmitType.MERGE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    int a = pushBranch(repo, "refs/heads/feature/one", "one");
+    int b = pushBranch(repo, "refs/heads/feature/two", "two");
+    ObjectId before = refValue(MASTER);
+    for (int n : new int[] {a, b}) {
+      var api = gApi.changes().id(project.get(), n);
+      api.topic("together");
+      api.setReadyForReview();
+      api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    }
+    ResourceConflictException e =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> gApi.changes().id(project.get(), a).current().submit());
+    assertThat(e).hasMessageThat().contains("with a merge commit");
+    assertThat(refValue(MASTER)).isEqualTo(before);
+    assertThat(change(a).status).isEqualTo(ChangeStatus.NEW);
+    assertThat(change(b).status).isEqualTo(ChangeStatus.NEW);
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "change.submitWholeTopic",
+      value = "true")
+  public void topicSubmitWithRebaseAddsOneCommitPerReview() throws Exception {
+    enable();
+    setSubmitType(SubmitType.REBASE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    int a = pushBranch(repo, "refs/heads/feature/one", "one");
+    int b = pushBranch(repo, "refs/heads/feature/two", "two");
+    ObjectId before = refValue(MASTER);
+    for (int n : new int[] {a, b}) {
+      var api = gApi.changes().id(project.get(), n);
+      api.topic("together");
+      api.setReadyForReview();
+      api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    }
+    gApi.changes().id(project.get(), a).current().submit();
+    List<RevCommit> added = between(before, refValue(MASTER));
+    assertThat(added).hasSize(2);
+    for (RevCommit c : added) {
+      assertThat(c.getParentCount()).isEqualTo(1);
+    }
+  }
+
+  @Test
+  public void configuredTargetChangeBlocksSubmitWithoutPush() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int n = onlyChange();
+    serverCommit("refs/heads/stable", "s.txt", "s\n");
+    setConfig(
+        DEFAULT_CONFIG.replace(
+            "targetBranch = refs/heads/master", "targetBranch = refs/heads/stable"));
+    ResourceConflictException e =
+        assertThrows(ResourceConflictException.class, () -> approveAndSubmit(n));
+    assertThat(e).hasMessageThat().contains("targetBranch is now refs/heads/stable");
+    assertThat(change(n).status).isEqualTo(ChangeStatus.NEW);
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.threads",
+      value = "1")
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.maxQueued",
+      value = "1")
+  public void cleanupStillHappensWhenTheMergeEventWasDropped() throws Exception {
+    enableCleanup();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allow(Permission.DELETE)
+                .ref("refs/heads/feature/*")
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int n = onlyChange();
+    var executor =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    // Fill the queue so that the merge event cannot be scheduled.
+    assertThat(
+            executor.execute(
+                () -> {
+                  try {
+                    release.await();
+                  } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                  }
+                }))
+        .isTrue();
+    try {
+      approveAndSubmit(n);
+      assertThat(lifecycle(FEATURE).merge).isNull();
+    } finally {
+      release.countDown();
+    }
+    waitFor(() -> executor.execute(() -> {}));
+    plugin
+        .getSysInjector()
+        .getInstance(io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class)
+        .runOnce();
+    waitFor(() -> refValue(FEATURE) == null);
+    Lifecycle lc = lifecycle(FEATURE);
+    assertThat(lc.merge.submitter).isEqualTo(admin.id().get());
+    assertThat(lc.merge.cleanup).isEqualTo("deleted");
+  }
+
   @Test
   public void mergeAlwaysIsBlocked() throws Exception {
     enable();

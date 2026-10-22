@@ -6,9 +6,11 @@ package io.github.quentinbtd.gerrit.branchreview.submit;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
 import com.google.gerrit.server.account.AccountCache;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -61,6 +63,7 @@ public class MergeHandler implements ChangeMergedListener {
   private final GitReferenceUpdated gitRefUpdated;
   private final AccountCache accountCache;
   private final Metrics metrics;
+  private final ApprovalsUtil approvalsUtil;
 
   @Inject
   MergeHandler(
@@ -74,7 +77,9 @@ public class MergeHandler implements ChangeMergedListener {
       ChangeNotes.Factory notesFactory,
       GitReferenceUpdated gitRefUpdated,
       AccountCache accountCache,
-      Metrics metrics) {
+      Metrics metrics,
+      ApprovalsUtil approvalsUtil) {
+    this.approvalsUtil = approvalsUtil;
     this.repoManager = repoManager;
     this.store = store;
     this.configLoader = configLoader;
@@ -145,8 +150,9 @@ public class MergeHandler implements ChangeMergedListener {
           lc.merge.submittedSourceId = lc.lastSourceId;
           changed = true;
         }
-        if (lc.merge.submitter == 0 && submitter != 0) {
-          lc.merge.submitter = submitter;
+        int who = submitter != 0 ? submitter : storedSubmitter(notes);
+        if (lc.merge.submitter == 0 && who != 0) {
+          lc.merge.submitter = who;
           BranchReviewConfig cfg = configLoader.load(project);
           if (cfg.isEnabled()
               && cfg.deleteSourceBranchOnSubmit()
@@ -231,6 +237,15 @@ public class MergeHandler implements ChangeMergedListener {
     log.atInfo().log(
         "branch-review cleanup project=%s ref=%s change=%d outcome=%s detail=%s",
         project, lc.sourceRef, lc.changeNumber, outcome, detail);
+  }
+
+  /**
+   * The submitter recorded by Gerrit (the submit approval of the merged patch set), used when the
+   * merge event itself was missed. 0 if unknown.
+   */
+  private int storedSubmitter(ChangeNotes notes) {
+    PatchSetApproval a = approvalsUtil.getSubmitter(notes, notes.getChange().currentPatchSetId());
+    return a == null ? 0 : a.accountId().get();
   }
 
   private boolean mayDelete(Project.NameKey project, String ref, int submitter) {
