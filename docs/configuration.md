@@ -15,6 +15,7 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
     sourceBranchPattern = refs/heads/bugfix/*
     excludeBranchPattern = refs/heads/feature/private/*
     deleteSourceBranchOnSubmit = false
+    syncEditsToBranch = true
 ```
 
 | Key | Required | Default | Meaning |
@@ -24,6 +25,7 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
 | `sourceBranchPattern` | when enabled, ≥1 | — | Source branches; repeat the key, patterns are ORed |
 | `excludeBranchPattern` | no | none | Exclusions; they win over source patterns |
 | `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission |
+| `syncEditsToBranch` | no | `true` | Content edits made in Gerrit (inline edit, upload to the Change) are committed back onto the source branch (see [architecture](architecture.md#edits-made-in-gerrit)). `false` keeps the conservative pause |
 
 Status of new Changes (WIP), WIP/Ready preservation and manual text preservation are fixed
 behaviour, not options.

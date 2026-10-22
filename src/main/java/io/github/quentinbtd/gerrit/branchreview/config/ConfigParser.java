@@ -21,9 +21,10 @@ public final class ConfigParser {
   static final String KEY_SOURCE = "sourceBranchPattern";
   static final String KEY_EXCLUDE = "excludeBranchPattern";
   static final String KEY_DELETE = "deleteSourceBranchOnSubmit";
+  static final String KEY_SYNC_EDITS = "syncEditsToBranch";
 
   private static final ImmutableSet<String> KNOWN_KEYS =
-      ImmutableSet.of(KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE);
+      ImmutableSet.of(KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE, KEY_SYNC_EDITS);
 
   private ConfigParser() {}
 
@@ -56,7 +57,7 @@ public final class ConfigParser {
         errors.add("unknown key " + SECTION + "." + name);
       }
     }
-    for (String single : List.of(KEY_ENABLED, KEY_TARGET, KEY_DELETE)) {
+    for (String single : List.of(KEY_ENABLED, KEY_TARGET, KEY_DELETE, KEY_SYNC_EDITS)) {
       if (cfg.getStringList(SECTION, null, single).length > 1) {
         errors.add(SECTION + "." + single + " must be set at most once");
       }
@@ -64,6 +65,7 @@ public final class ConfigParser {
 
     Boolean enabled = parseBoolean(cfg, KEY_ENABLED, false, errors);
     Boolean delete = parseBoolean(cfg, KEY_DELETE, false, errors);
+    Boolean syncEdits = parseBoolean(cfg, KEY_SYNC_EDITS, true, errors);
     // Patterns are validated even when disabled so that a file can be reviewed before enabling.
     ImmutableList<RefPattern> sources = parsePatterns(cfg, KEY_SOURCE, errors);
     ImmutableList<RefPattern> excludes = parsePatterns(cfg, KEY_EXCLUDE, errors);
@@ -103,7 +105,13 @@ public final class ConfigParser {
       return BranchReviewConfig.invalid(ImmutableList.copyOf(errors));
     }
     return new BranchReviewConfig(
-        BranchReviewConfig.Status.ENABLED, target, sources, excludes, delete, ImmutableList.of());
+        BranchReviewConfig.Status.ENABLED,
+        target,
+        sources,
+        excludes,
+        delete,
+        syncEdits,
+        ImmutableList.of());
   }
 
   private static Boolean parseBoolean(Config cfg, String key, boolean def, List<String> errors) {

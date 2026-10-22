@@ -18,6 +18,7 @@ public record BranchReviewConfig(
     ImmutableList<RefPattern> sourcePatterns,
     ImmutableList<RefPattern> excludePatterns,
     boolean deleteSourceBranchOnSubmit,
+    boolean syncEditsToBranch,
     ImmutableList<String> errors) {
 
   /** Namespace that holds plugin state; never eligible and never writable by users. */
@@ -31,12 +32,18 @@ public record BranchReviewConfig(
 
   public static BranchReviewConfig disabled() {
     return new BranchReviewConfig(
-        Status.DISABLED, null, ImmutableList.of(), ImmutableList.of(), false, ImmutableList.of());
+        Status.DISABLED,
+        null,
+        ImmutableList.of(),
+        ImmutableList.of(),
+        false,
+        false,
+        ImmutableList.of());
   }
 
   public static BranchReviewConfig invalid(ImmutableList<String> errors) {
     return new BranchReviewConfig(
-        Status.INVALID, null, ImmutableList.of(), ImmutableList.of(), false, errors);
+        Status.INVALID, null, ImmutableList.of(), ImmutableList.of(), false, false, errors);
   }
 
   public boolean isEnabled() {

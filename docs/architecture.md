@@ -80,7 +80,7 @@ Supported topology: one primary Gerrit server. Replicas only receive the replica
 | `targetBranch` changed while a lifecycle is active | `BLOCKED`; the Change keeps its original target; abandon + `--new-lifecycle` or revert the config |
 | Patterns changed so the branch no longer matches | Not synchronized, reported; nothing moves |
 | Mapping inconsistent | `BLOCKED`; automatic mutation stops; diagnose with `status` |
-| Patch set not produced by the plugin changes content | `DIVERGED`; paused until `sync --accept-divergence` |
+| Patch set not produced by the plugin changes content | With `syncEditsToBranch` (default): the edit is committed onto the branch ([details](#edits-made-in-gerrit)). If that is impossible, or the option is off: `DIVERGED`, paused until the branch contains the edit (or `sync --accept-divergence` when the option is off) |
 
 ## Generated text
 
@@ -105,6 +105,43 @@ derived from its own (same tree and parent, or a clean rebase producing exactly 
 tree). Unpublished change edits are not touched; Gerrit keeps them on their base patch set.
 WIP/Ready state, reviewers, votes (subject to Gerrit's copy rules), topic, hashtags, attention
 set and privacy are never modified by synchronization.
+
+## Edits made in Gerrit
+
+Reviewers and authors can change files directly in Gerrit (inline edit and publish, or an
+upload to the Change). Such a patch set is not produced by the plugin; the branch does not
+contain it, so applying the branch again would erase it. With `syncEditsToBranch = true`
+(default) the plugin carries the edit back to the branch:
+
+1. A `RevisionCreatedListener` schedules a synchronization as the uploader for every patch set
+   the plugin did not create. Message-only edits and Gerrit rebases are recognized and change
+   nothing. The same logic also runs when a push finds such a patch set.
+2. The human delta is isolated: the difference between the plugin's last patch set (rebased on
+   the published patch set's parent if Gerrit rebased it) and the published patch set.
+3. That delta is three-way merged onto the current branch tip. The branch never receives target
+   changes, only the edit.
+4. If the branch already contains the edit, nothing is written. Otherwise one commit
+   `Apply review edits from Change N patch set k` is created on top of the tip (fast-forward),
+   authored and committed by the uploader, and the branch ref is updated with a
+   compare-and-swap on the tip that was read. The uploader must hold push permission on the
+   branch; the plugin grants nothing.
+5. The lifecycle then treats the published patch set as its own. If the branch tip and target
+   are unchanged no new patch set appears; after a push the new patch set contains both.
+
+Developers see an ordinary non-fast-forward rejection if they push from the old tip and simply
+`git pull` first; a push that triggered the transfer says so ("run git pull before pushing
+again"). A deliberate `git push --force` replaces the branch and therefore removes the edit
+from the next patch set, like any force push.
+
+When the edit cannot be transferred (conflict with the branch, uploader without push
+permission, a merge commit, an edit combined with a rebase that cannot be separated) the
+lifecycle pauses in `DIVERGED`. The next push prints the reason and the commands to apply the
+edit by hand (`git fetch` of both patch sets, `git diff … | git apply --3way`); synchronization
+resumes automatically as soon as a pushed branch contains the edit. With
+`syncEditsToBranch = false` the plugin never writes the branch and resumes only after
+`branch-review sync --accept-divergence`. Repair commands in messages show this server's real SSH
+address (`sshd.advertisedAddress`, else `sshd.listenAddress` with the canonical web host), or the
+REST call when SSH is disabled.
 
 ## Submit and cleanup
 

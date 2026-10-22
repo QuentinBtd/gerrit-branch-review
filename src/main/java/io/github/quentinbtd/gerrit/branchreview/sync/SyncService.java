@@ -23,6 +23,7 @@ import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.config.UrlFormatter;
+import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
@@ -57,7 +58,10 @@ import io.github.quentinbtd.gerrit.branchreview.text.MessageGenerator;
 import io.github.quentinbtd.gerrit.branchreview.text.TextOwnership;
 import java.io.IOException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -68,8 +72,10 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.merge.ThreeWayMerger;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -100,6 +106,8 @@ public class SyncService {
 
   public enum Trigger {
     PUSH,
+    /** A patch set was uploaded in Gerrit (e.g. an inline edit). */
+    EDIT,
     RECOVERY,
     MANUAL
   }
@@ -123,6 +131,9 @@ public class SyncService {
   private final Sequences sequences;
   private final DynamicItem<UrlFormatter> urlFormatter;
   private final Metrics metrics;
+  private final CommandHints hints;
+  private final IdentifiedUser.GenericFactory userFactory;
+  private final GitReferenceUpdated gitRefUpdated;
   private final Striped<Lock> locks = Striped.lazyWeakLock(1024);
 
   @Inject
@@ -139,7 +150,13 @@ public class SyncService {
       BatchUpdate.Factory batchUpdateFactory,
       Sequences sequences,
       DynamicItem<UrlFormatter> urlFormatter,
-      Metrics metrics) {
+      Metrics metrics,
+      CommandHints hints,
+      IdentifiedUser.GenericFactory userFactory,
+      GitReferenceUpdated gitRefUpdated) {
+    this.hints = hints;
+    this.userFactory = userFactory;
+    this.gitRefUpdated = gitRefUpdated;
     this.repoManager = repoManager;
     this.projectCache = projectCache;
     this.configLoader = configLoader;
@@ -311,10 +328,8 @@ public class SyncService {
                           + lc.changeNumber
                           + " is abandoned and is not restored automatically.",
                       "Restore it in Gerrit and push again (or run branch-review sync), or start a"
-                          + " new Change with: ssh <host> branch-review sync --new-lifecycle "
-                          + project.get()
-                          + " "
-                          + sourceRef)
+                          + " new Change with: "
+                          + hints.sync(project, sourceRef, "--new-lifecycle"))
                   .withChange(
                       lc.changeNumber,
                       lc.lastSyntheticPatchSet,
@@ -338,10 +353,8 @@ public class SyncService {
                       + lc.changeNumber
                       + " belongs to the previous branch.",
                   "Abandon it and push again to start a new Change, or continue it explicitly with:"
-                      + " ssh <host> branch-review sync --resume "
-                      + project.get()
                       + " "
-                      + sourceRef)
+                      + hints.sync(project, sourceRef, "--resume"))
               .withChange(
                   lc.changeNumber,
                   lc.lastSyntheticPatchSet,
@@ -517,6 +530,26 @@ public class SyncService {
       IdentifiedUser user,
       Options opts)
       throws IOException, ConcurrentUpdateException, PermissionBackendException {
+    List<String> extra = new ArrayList<>();
+    SyncResult r =
+        doUpdate(repo, ins, rw, project, cfg, lc, stateId, notes, sourceId, user, opts, extra);
+    return extra.isEmpty() ? r : r.withExtraDetails(extra);
+  }
+
+  private SyncResult doUpdate(
+      Repository repo,
+      ObjectInserter ins,
+      RevWalk rw,
+      Project.NameKey project,
+      BranchReviewConfig cfg,
+      Lifecycle lc,
+      ObjectId stateId,
+      ChangeNotes notes,
+      ObjectId sourceId,
+      IdentifiedUser user,
+      Options opts,
+      List<String> extra)
+      throws IOException, ConcurrentUpdateException, PermissionBackendException {
     String sourceRef = lc.sourceRef;
     lc.lastActor = user.getAccountId().get();
     if (!cfg.targetBranch().equals(lc.targetRef)) {
@@ -558,27 +591,75 @@ public class SyncService {
     if (!current.commitId().equals(lastSynthetic)
         && !isDerivative(repo, ins, rw, currentCommit, rw.parseCommit(lastSynthetic))
         && !opts.acceptDivergence()) {
-      lc.syncState = SyncState.DIVERGED;
-      lc.observedSourceId = sourceId.name();
-      lc.lastError =
-          "patch set "
-              + current.number()
-              + " was not produced by branch-review and changes the reviewed content";
-      store.saveLifecycle(repo, project, lc, stateId, "diverged");
-      return SyncResult.of(
-              SyncResult.Kind.NOT_SYNCHRONIZED,
-              sourceRef,
-              lc.lastError + "; automatic synchronization is paused so that it is not overwritten.",
-              "Incorporate the change into the branch, then run: ssh <host> branch-review sync"
-                  + " --accept-divergence "
-                  + project.get()
-                  + " "
-                  + sourceRef)
-          .withChange(
-              lc.changeNumber,
-              current.number(),
-              notes.getChange().isWorkInProgress(),
-              changeUrl(project, lc.changeNumber));
+      // A human changed the reviewed content in Gerrit (inline edit, direct upload).
+      EditBackport backport =
+          cfg.syncEditsToBranch()
+              ? backportEdits(
+                  repo,
+                  ins,
+                  rw,
+                  project,
+                  lc,
+                  current,
+                  currentCommit,
+                  rw.parseCommit(lastSynthetic),
+                  sourceId)
+              : EditBackport.refused(null);
+      if (backport.accepted()) {
+        lc.lastSyntheticCommit = current.commitId().name();
+        lc.lastSyntheticPatchSet = current.number();
+        if (backport.commit() != null) {
+          sourceId = backport.commit();
+          extra.add(
+              "applied the edits of patch set "
+                  + current.number()
+                  + " (by "
+                  + backport.editor()
+                  + ") to "
+                  + sourceRef
+                  + " as "
+                  + backport.commit().abbreviate(12).name()
+                  + "; run git pull before pushing again");
+        }
+      } else {
+        lc.syncState = SyncState.DIVERGED;
+        lc.observedSourceId = sourceId.name();
+        lc.lastError =
+            "patch set "
+                + current.number()
+                + " was not produced by branch-review and changes the reviewed content";
+        store.saveLifecycle(repo, project, lc, stateId, "diverged");
+        List<String> lines = new ArrayList<>();
+        lines.add(
+            lc.lastError + "; automatic synchronization is paused so that it is not overwritten.");
+        if (backport.reason() != null) {
+          lines.add("the edits could not be applied to the branch: " + backport.reason());
+        }
+        PatchSet.Id ours = PatchSet.id(notes.getChangeId(), lc.lastSyntheticPatchSet);
+        lines.add("To bring the edits into your branch:");
+        lines.add("  git fetch origin " + ours.toRefName() + " " + current.id().toRefName());
+        lines.add(
+            "  git diff "
+                + lastSynthetic.name()
+                + " "
+                + current.commitId().name()
+                + " | git apply --3way");
+        if (cfg.syncEditsToBranch()) {
+          lines.add(
+              "then commit and push; synchronization resumes once the branch contains the edits.");
+        } else {
+          lines.add(
+              "then commit, push, and run: "
+                  + hints.sync(project, sourceRef, "--accept-divergence"));
+        }
+        return SyncResult.of(
+                SyncResult.Kind.NOT_SYNCHRONIZED, sourceRef, lines.toArray(new String[0]))
+            .withChange(
+                lc.changeNumber,
+                current.number(),
+                notes.getChange().isWorkInProgress(),
+                changeUrl(project, lc.changeNumber));
+      }
     }
 
     if (sourceId.name().equals(lc.lastSourceId)
@@ -884,10 +965,7 @@ public class SyncService {
         SyncResult.Kind.FAILED,
         sourceRef,
         "error: " + e.getMessage(),
-        "the branch update itself was accepted; inspect with: ssh <host> branch-review status "
-            + project.get()
-            + " "
-            + sourceRef);
+        "the branch update itself was accepted; inspect with: " + hints.status(project, sourceRef));
   }
 
   private void markMerged(Lifecycle lc, ChangeNotes notes) {
@@ -899,6 +977,143 @@ public class SyncService {
     if (lc.merge.mergedCommit == null) {
       lc.merge.mergedCommit = notes.getCurrentPatchSet().commitId().name();
       lc.merge.submittedSourceId = lc.lastSourceId;
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Edits made in Gerrit -> source branch
+
+  /** Outcome of carrying human edits of the review back to the source branch. */
+  record EditBackport(boolean accepted, ObjectId commit, String editor, String reason) {
+    static EditBackport applied(ObjectId commit, String editor) {
+      return new EditBackport(true, commit, editor, null);
+    }
+
+    static EditBackport alreadyInBranch() {
+      return new EditBackport(true, null, null, null);
+    }
+
+    static EditBackport refused(String reason) {
+      return new EditBackport(false, null, null, reason);
+    }
+  }
+
+  /**
+   * Applies the human delta of {@code published} to the source branch as one fast-forward commit.
+   *
+   * <p>The delta is isolated as the difference between the plugin's last patch set (rebased onto
+   * the published patch set's parent if Gerrit rebased it) and the published patch set. It is
+   * three-way merged onto the current source tip, so the branch keeps its own history and never
+   * receives target changes. The commit is authored by the uploader of the published patch set, who
+   * must be allowed to push to the source branch; the ref update is a compare-and-swap on the tip
+   * that was read. If the branch already contains the edits nothing is written.
+   */
+  private EditBackport backportEdits(
+      Repository repo,
+      ObjectInserter ins,
+      RevWalk rw,
+      Project.NameKey project,
+      Lifecycle lc,
+      PatchSet ps,
+      RevCommit published,
+      RevCommit synthetic,
+      ObjectId sourceId)
+      throws IOException, ConcurrentUpdateException, PermissionBackendException {
+    if (published.getParentCount() != 1 || synthetic.getParentCount() != 1) {
+      return EditBackport.refused("patch set " + ps.number() + " is a merge commit");
+    }
+    ObjectId base = synthetic.getTree();
+    if (!published.getParent(0).equals(synthetic.getParent(0))) {
+      ThreeWayMerger rebase =
+          (ThreeWayMerger) MergeStrategy.RESOLVE.newMerger(ins, repo.getConfig());
+      rebase.setBase(synthetic.getParent(0));
+      if (!rebase.merge(rw.parseCommit(published.getParent(0)), synthetic)) {
+        return EditBackport.refused(
+            "patch set " + ps.number() + " was also rebased and its edits cannot be isolated");
+      }
+      base = rebase.getResultTreeId();
+    }
+    RevCommit tip = rw.parseCommit(sourceId);
+    ResolveMerger merger = (ResolveMerger) MergeStrategy.RESOLVE.newMerger(ins, repo.getConfig());
+    merger.setBase(base);
+    if (!merger.merge(tip, published)) {
+      List<String> paths = new ArrayList<>(merger.getUnmergedPaths());
+      if (merger.getFailingPaths() != null) {
+        paths.addAll(merger.getFailingPaths().keySet());
+      }
+      return EditBackport.refused(
+          "they conflict with the branch in "
+              + String.join(", ", paths.stream().sorted().distinct().limit(20).toList()));
+    }
+    ObjectId tree = merger.getResultTreeId();
+    if (tree.equals(tip.getTree())) {
+      return EditBackport.alreadyInBranch();
+    }
+    IdentifiedUser editor = userFactory.create(ps.uploader());
+    String editorName = editor.getLoggableName();
+    if (!permissionBackend
+        .user(editor)
+        .project(project)
+        .ref(lc.sourceRef)
+        .test(RefPermission.UPDATE)) {
+      return EditBackport.refused(
+          editorName
+              + ", who uploaded patch set "
+              + ps.number()
+              + ", may not push to "
+              + lc.sourceRef);
+    }
+    PersonIdent ident = editor.newCommitterIdent(ps.createdOn(), ZoneId.systemDefault());
+    CommitBuilder cb = new CommitBuilder();
+    cb.setTreeId(tree);
+    cb.setParentId(tip);
+    cb.setAuthor(ident);
+    cb.setCommitter(ident);
+    cb.setEncoding(UTF_8);
+    String url = changeUrl(project, lc.changeNumber);
+    cb.setMessage(
+        "Apply review edits from Change "
+            + lc.changeNumber
+            + " patch set "
+            + ps.number()
+            + "\n\nThese edits were made in Gerrit on patch set "
+            + ps.number()
+            + " of Change "
+            + lc.changeNumber
+            + (url == null ? "" : " (" + url + ")")
+            + "\nand applied to "
+            + lc.sourceRef
+            + " by branch-review.\n");
+    ObjectId commit = ins.insert(cb);
+    ins.flush();
+    RefUpdate ru = repo.updateRef(lc.sourceRef);
+    ru.setExpectedOldObjectId(tip);
+    ru.setNewObjectId(commit);
+    ru.setRefLogIdent(ident);
+    ru.setRefLogMessage(
+        "branch-review: apply edits of change " + lc.changeNumber + " patch set " + ps.number(),
+        false);
+    RefUpdate.Result r;
+    try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.BRANCH_MODIFICATION)) {
+      r = ru.update();
+    }
+    switch (r) {
+      case FAST_FORWARD -> {
+        gitRefUpdated.fire(project, ru, editor.state());
+        log.atInfo().log(
+            "branch-review applied edits project=%s ref=%s change=%d ps=%d editor=%d commit=%s",
+            project,
+            lc.sourceRef,
+            lc.changeNumber,
+            ps.number(),
+            ps.uploader().get(),
+            commit.name());
+        return EditBackport.applied(commit, editorName);
+      }
+      case LOCK_FAILURE, REJECTED -> throw new ConcurrentUpdateException(lc.sourceRef);
+      default -> {
+        return EditBackport.refused("the branch could not be updated (" + r + ")");
+      }
     }
   }
 

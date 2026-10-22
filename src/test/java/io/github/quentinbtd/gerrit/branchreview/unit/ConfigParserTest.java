@@ -48,6 +48,9 @@ public class ConfigParserTest {
     assertThat(c.isEnabled()).isTrue();
     assertThat(c.targetBranch()).isEqualTo("refs/heads/master");
     assertThat(c.deleteSourceBranchOnSubmit()).isFalse();
+    assertThat(c.syncEditsToBranch()).isTrue();
+    assertThat(ConfigParser.parseText(VALID + "  syncEditsToBranch = false\n").syncEditsToBranch())
+        .isFalse();
     assertThat(c.isEligibleSource("refs/heads/feature/x")).isTrue();
     assertThat(c.isEligibleSource("refs/heads/feature/a/b/c")).isTrue();
     assertThat(c.isEligibleSource("refs/heads/bugfix/1")).isTrue();
@@ -81,6 +84,8 @@ public class ConfigParserTest {
     assertInvalid(VALID.replace("refs/heads/master", "master"), "fully qualified");
     assertInvalid(VALID.replace("refs/heads/master", "refs/heads/*"), "fully qualified");
     assertInvalid(VALID.replace("enabled = true", "enabled = maybe"), "true or false");
+    assertInvalid(
+        VALID + "  syncEditsToBranch = sometimes\n", "syncEditsToBranch must be true or false");
     assertInvalid(
         VALID.replace("refs/heads/feature/*", "^refs/heads/feature/.*"), "regular expressions");
     assertInvalid(VALID.replace("refs/heads/feature/*", "refs/heads/*/feature"), "last character");

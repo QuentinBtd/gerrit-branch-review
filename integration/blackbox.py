@@ -147,6 +147,14 @@ class Gerrit:
         raw = raw[4:] if raw.startswith(")]}'") else raw
         return status, (json.loads(raw) if raw.strip() else None)
 
+    def rest_raw(self, method, path, data, auth=None):
+        req = urllib.request.Request(self.base + "/a" + path, data=data, method=method)
+        req.add_header("Content-Type", "application/octet-stream")
+        user, pw = auth or self.admin_auth
+        req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode())
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status
+
     def bootstrap_admin(self):
         """Creates the first account (which becomes an administrator) via development login."""
         jar = http.cookiejar.CookieJar()
@@ -483,6 +491,36 @@ class BlackBox(unittest.TestCase):
         files = c.git("ls-tree", "--name-only", after).stdout.split()
         for i in range(4):
             self.assertIn("s%d.txt" % i, files)
+
+    def test_ui_edit_reaches_branch(self):
+        p = self.new_project()
+        c = self.feature_client(p, self.alice, "ssh")
+        c.commit("a.txt", "a\n", "a")
+        c.push("origin", "feature/x")
+        n = self.changes(p)[0]["_number"]
+        before = c.git("rev-parse", "HEAD").stdout.strip()
+        # Inline edit in Gerrit by alice (the change owner), then publish it.
+        alice = ("alice", PASSWORD)
+        self.gerrit.rest_raw("PUT", "/changes/%d/edit/a.txt" % n, b"edited in Gerrit\n", auth=alice)
+        self.gerrit.rest("POST", "/changes/%d/edit:publish" % n, {}, auth=alice)
+        deadline = time.time() + 60
+        while True:
+            remote = c.git("ls-remote", "origin", "refs/heads/feature/x").stdout.split()[0]
+            if remote != before:
+                break
+            self.assertLess(time.time(), deadline, "branch was not updated with the edit")
+            time.sleep(1)
+        c.git("pull", "-q", "--ff-only", "origin", "feature/x")
+        with open(os.path.join(c.dir, "a.txt")) as f:
+            self.assertEqual(f.read(), "edited in Gerrit\n")
+        log = c.git("log", "-1", "--format=%an|%s").stdout.strip()
+        self.assertEqual(log, "Alice|Apply review edits from Change %d patch set 2" % n)
+        c.commit("b.txt", "b\n", "b")
+        out = c.push("origin", "feature/x")
+        self.assertIn(
+            "refs/heads/feature/x: updated Change %d with patch set 3 (WIP)" % n,
+            GitClient.plugin_lines(out),
+        )
 
     def test_z_restart_keeps_association(self):
         p = self.new_project()

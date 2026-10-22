@@ -58,7 +58,8 @@ grants review rights.
 1. `git push -u origin feature/x` — one WIP Change is created; the push prints its URL.
 2. More commits, `git push` — the same Change gets a new patch set (its WIP/Ready state, reviewers,
    votes per Gerrit's copy rules, topic and hashtags are kept).
-3. Mark the Change ready in Gerrit, review as usual. Edit the title/description in Gerrit if you
+3. Mark the Change ready in Gerrit, review as usual. File edits made in Gerrit are committed back
+   onto the branch (`git pull` before the next push). Edit the title/description in Gerrit if you
    like: edited parts are never overwritten again; untouched parts keep following the branch.
 4. Submit normally. The target gains one commit with the branch's net changes; the branch's own
    commits do not become target ancestors. Optionally the source branch is deleted afterwards.

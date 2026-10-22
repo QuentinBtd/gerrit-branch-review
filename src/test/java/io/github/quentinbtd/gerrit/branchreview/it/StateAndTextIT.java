@@ -124,18 +124,41 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     assertThat(change(number).subject).isEqualTo("Text and state");
   }
 
-  @Test
-  public void humanContentPatchSetPausesSynchronization() throws Exception {
+  private static final String NO_BACKPORT = DEFAULT_CONFIG + "  syncEditsToBranch = false\n";
+
+  private void editInGerrit(String path, String content) throws Exception {
     var edit = gApi.changes().id(project.get(), number).edit();
     edit.create();
-    edit.modifyFile("a/file1.txt", RawInputUtil.create("edited in UI\n"));
+    edit.modifyFile(path, RawInputUtil.create(content));
     edit.publish();
+  }
+
+  private org.eclipse.jgit.revwalk.RevCommit sourceTip() throws Exception {
+    try (var r = repoManager.openRepository(project);
+        var rw = new org.eclipse.jgit.revwalk.RevWalk(r)) {
+      return rw.parseCommit(refValue(FEATURE));
+    }
+  }
+
+  private void syncLocal() throws Exception {
+    repo.git().fetch().setRemote("origin").setRefSpecs("+" + FEATURE + ":" + FEATURE).call();
+    repo.reset(refValue(FEATURE));
+  }
+
+  @Test
+  public void humanContentPatchSetPausesSynchronizationWhenBackportDisabled() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
     assertThat(change(number).revisions).hasSize(2);
 
     commits(repo, "b", 1);
     PushResult r = push(repo, FEATURE);
     assertOk(r, FEATURE);
     assertThat(joined(r)).contains("was not produced by branch-review");
+    assertThat(joined(r)).contains("git diff ");
+    assertThat(joined(r)).contains("| git apply --3way");
+    assertThat(joined(r)).contains("accept_divergence");
+    assertThat(joined(r)).doesNotContain("<host>");
     assertThat(change(number).revisions).hasSize(2);
     assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.DIVERGED);
 
@@ -144,6 +167,122 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     syncViaRest(user, FEATURE, in);
     assertThat(change(number).revisions).hasSize(3);
     assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  @Test
+  public void uiEditIsAppliedToTheBranch() throws Exception {
+    var before = sourceTip();
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    waitFor(() -> !refValue(FEATURE).equals(before));
+    waitFor(() -> lifecycle(FEATURE).syncState == Lifecycle.SyncState.SYNCED);
+
+    var tip = sourceTip();
+    assertThat(tip.getParentCount()).isEqualTo(1);
+    assertThat(tip.getParent(0)).isEqualTo(before);
+    assertThat(tip.getAuthorIdent().getEmailAddress()).isEqualTo(admin.email());
+    assertThat(tip.getShortMessage())
+        .isEqualTo("Apply review edits from Change " + number + " patch set 2");
+    assertThat(fileAt(tip, "a/file1.txt")).isEqualTo("edited in UI\n");
+    // Only the edit is carried over: the branch never receives target changes.
+    assertThat(between(before, tip)).hasSize(1);
+    Lifecycle lc = lifecycle(FEATURE);
+    assertThat(lc.lastSourceId).isEqualTo(tip.name());
+    assertThat(lc.lastSyntheticPatchSet).isEqualTo(2);
+    assertThat(change(number).revisions).hasSize(2);
+
+    // A push based on the old tip is an ordinary non-fast-forward; after pulling it works.
+    commits(repo, "b", 1);
+    PushResult r = push(repo, "HEAD:" + FEATURE, false);
+    assertThat(r.getRemoteUpdate(FEATURE).getStatus())
+        .isNotEqualTo(org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK);
+    syncLocal();
+    commits(repo, "c", 1);
+    r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    ChangeInfo c = change(number);
+    assertThat(c.revisions).hasSize(3);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(c.currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("edited in UI\n");
+    assertThat(fileAt(rev, "c/file1.txt")).isEqualTo("c content 1\n");
+  }
+
+  @Test
+  public void editIsAppliedOnTopOfAConcurrentPush() throws Exception {
+    // The edit is published while nothing reacts (e.g. the developer pushes right after).
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    enable();
+    var pushed = commits(repo, "b", 1);
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("applied the edits of patch set 2");
+    assertThat(joined(r)).contains("run git pull before pushing again");
+    var tip = sourceTip();
+    assertThat(tip.getParent(0)).isEqualTo(pushed);
+    ChangeInfo c = change(number);
+    assertThat(c.revisions).hasSize(3);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(c.currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("edited in UI\n");
+    assertThat(fileAt(rev, "b/file1.txt")).isEqualTo("b content 1\n");
+    assertThat(lifecycle(FEATURE).lastSourceId).isEqualTo(tip.name());
+  }
+
+  @Test
+  public void editAlreadyInTheBranchIsRecognized() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    enable();
+    var pushed =
+        repo.branch("HEAD")
+            .commit()
+            .author(user.newIdent())
+            .committer(user.newIdent())
+            .message("take the review edit")
+            .add("a/file1.txt", "edited in UI\n")
+            .create();
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).doesNotContain("applied the edits");
+    assertThat(refValue(FEATURE)).isEqualTo(pushed);
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+    assertThat(lifecycle(FEATURE).lastSourceId).isEqualTo(pushed.name());
+  }
+
+  @Test
+  public void conflictingEditPausesWithExplanation() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    enable();
+    repo.branch("HEAD")
+        .commit()
+        .author(user.newIdent())
+        .committer(user.newIdent())
+        .message("conflicting local change")
+        .add("a/file1.txt", "edited locally\n")
+        .create();
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("the edits could not be applied to the branch");
+    assertThat(joined(r)).contains("conflict with the branch in a/file1.txt");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.DIVERGED);
+    assertThat(change(number).revisions).hasSize(2);
+  }
+
+  @Test
+  public void editorWithoutBranchPushRightKeepsThePause() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block(
+                    com.google.gerrit.entities.Permission.PUSH)
+                .ref(FEATURE)
+                .group(adminGroupUuid()))
+        .update();
+    var before = refValue(FEATURE);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    waitFor(() -> lifecycle(FEATURE).syncState == Lifecycle.SyncState.DIVERGED);
+    assertThat(refValue(FEATURE)).isEqualTo(before);
   }
 
   @Test

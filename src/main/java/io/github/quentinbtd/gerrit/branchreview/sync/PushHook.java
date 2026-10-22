@@ -56,6 +56,7 @@ public class PushHook implements PostReceiveHook, ReceivePackInitializer {
   private final ServerSettings settings;
   private final SyncExecutor executor;
   private final GitRepositoryManager repoManager;
+  private final CommandHints hints;
 
   @Inject
   PushHook(
@@ -63,8 +64,10 @@ public class PushHook implements PostReceiveHook, ReceivePackInitializer {
       ProjectConfigLoader configLoader,
       ServerSettings settings,
       SyncExecutor executor,
-      GitRepositoryManager repoManager) {
+      GitRepositoryManager repoManager,
+      CommandHints hints) {
     this.repoManager = repoManager;
+    this.hints = hints;
     this.currentUser = currentUser;
     this.configLoader = configLoader;
     this.settings = settings;
@@ -129,11 +132,8 @@ public class PushHook implements PostReceiveHook, ReceivePackInitializer {
         rp.sendMessage(
             PREFIX
                 + c.getRefName()
-                + ": refs/meta/config changed in the same push; not synchronized. Run: ssh <host>"
-                + " branch-review sync "
-                + project.get()
-                + " "
-                + c.getRefName());
+                + ": refs/meta/config changed in the same push; not synchronized. Run: "
+                + hints.sync(project, c.getRefName(), null));
       }
       return;
     }
@@ -162,7 +162,7 @@ public class PushHook implements PostReceiveHook, ReceivePackInitializer {
                 "server busy; synchronization was not started. Push again or run branch-review"
                     + " sync");
       } else {
-        r = await(e.getKey(), e.getValue().get(), deadline);
+        r = await(project, e.getKey(), e.getValue().get(), deadline);
       }
       for (String line : r.render()) {
         rp.sendMessage(PREFIX + line);
@@ -179,14 +179,13 @@ public class PushHook implements PostReceiveHook, ReceivePackInitializer {
     }
   }
 
-  private static SyncResult await(String ref, CompletableFuture<SyncResult> f, long deadline) {
+  private SyncResult await(
+      Project.NameKey project, String ref, CompletableFuture<SyncResult> f, long deadline) {
     try {
       return f.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
     } catch (TimeoutException e) {
       return SyncResult.of(
-          SyncResult.Kind.IN_PROGRESS,
-          ref,
-          "check the result with: ssh <host> branch-review status");
+          SyncResult.Kind.IN_PROGRESS, ref, "check the result with: " + hints.status(project, ref));
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return SyncResult.of(SyncResult.Kind.IN_PROGRESS, ref);

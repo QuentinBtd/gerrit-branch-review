@@ -49,6 +49,17 @@ public record SyncResult(
     return new SyncResult(kind, ref, 0, 0, false, null, ImmutableList.copyOf(details));
   }
 
+  public SyncResult withExtraDetails(java.util.List<String> more) {
+    return new SyncResult(
+        kind,
+        sourceRef,
+        changeNumber,
+        patchSet,
+        workInProgress,
+        url,
+        ImmutableList.<String>builder().addAll(details).addAll(more).build());
+  }
+
   public SyncResult withChange(int change, int ps, boolean wip, String url) {
     return new SyncResult(kind, sourceRef, change, ps, wip, url, details);
   }
