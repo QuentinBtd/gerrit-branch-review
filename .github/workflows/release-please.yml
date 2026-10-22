@@ -16,28 +16,27 @@ jobs:
     name: Maintain release PR / create release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
       sha: ${{ steps.rp.outputs.sha }}
     steps:
-      # A GitHub App token (not GITHUB_TOKEN) so that the release PR runs CI and the created
-      # tag/release are attributed to the app. Releases are created as drafts and published
-      # only after the assets are uploaded by the release job below.
-      - id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      # Use the built-in token: no GitHub App or additional release secrets are needed.
+      # Its release PR needs a maintainer close/reopen to trigger CI (see docs/releasing.md).
       - id: rp
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
 
+  # GITHUB_TOKEN-created releases do not trigger another workflow; keep the gated
+  # publication in this run, using the exact SHA returned by Release Please.
   release:
     name: Build and publish assets
     needs: release-please
@@ -48,4 +47,3 @@ jobs:
     with:
       version: ${{ needs.release-please.outputs.version }}
       ref: ${{ needs.release-please.outputs.sha }}
-    secrets: inherit
