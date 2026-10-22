@@ -97,8 +97,10 @@ byte-for-byte; `build-info.json` records the toolchain for traceability.
 
 ## Repository setup required (once, by a maintainer)
 
-- GitHub App for releases (contents: write, pull requests: write); store `RELEASE_APP_ID` as a
-  repository variable and `RELEASE_APP_PRIVATE_KEY` as a secret, install it on this repository.
+- GitHub App for releases (contents: write, pull requests: write); store its **Client ID**
+  (`Iv23…`, shown on the App's settings page; not the numeric App ID) as the repository variable
+  `RELEASE_APP_CLIENT_ID` and a private key as the secret `RELEASE_APP_PRIVATE_KEY`, and install
+  it on this repository.
 - Branch protection on `main`: require the CI checks (`Formatting, hooks and static checks`,
   `Conventional Commits (merge input)`, `Unit tests`, `Build / Gerrit 3.x`, `Integration /
   Acceptance + black-box (Gerrit 3.x)` for each series), require PRs, allow squash merge only.

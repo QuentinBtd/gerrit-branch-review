@@ -53,7 +53,8 @@ lookups; they are marked "github-token-required" in the offline extraction only.
 1. Create a GitHub App with repository permissions: Contents read/write, Pull requests
    read/write, Issues read/write (dependency dashboard), Workflows read/write (to update workflow
    pins), Checks read, Metadata read. Install it on this repository only.
-2. Repository variable `RENOVATE_APP_ID`, secret `RENOVATE_APP_PRIVATE_KEY`, variable
+2. Repository variable `RENOVATE_APP_CLIENT_ID` (the App's **Client ID**, `Iv23…`, not the
+   numeric App ID), secret `RENOVATE_APP_PRIVATE_KEY`, variable
    `RENOVATE_GIT_AUTHOR` (`<app-slug>[bot] <<app-user-id>+<app-slug>[bot]@users.noreply.github.com>`).
 3. Run the workflow manually with "dry run" first.
 
