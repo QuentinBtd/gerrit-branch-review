@@ -499,7 +499,14 @@ public class SubmitIT extends AbstractBranchReviewIT {
     TestRepository<InMemoryRepository> repo = cloneAs(user);
     pushFeature(repo, 2);
     approveAndSubmit(onlyChange());
-    waitFor(() -> refValue(FEATURE) == null);
+    // The ref is deleted before the final cleanup result is persisted.
+    waitFor(
+        () -> {
+          Lifecycle current = lifecycle(FEATURE);
+          return current.merge != null
+              && "deleted".equals(current.merge.cleanup)
+              && refValue(FEATURE) == null;
+        });
     Lifecycle lc = lifecycle(FEATURE);
     assertThat(lc.merge.cleanup).isEqualTo("deleted");
     // Repeated merge handling is idempotent.

@@ -49,12 +49,18 @@ The release PR's own title (`chore: release X.Y.Z`) is a valid Conventional Comm
 ## Stable release flow
 
 1. Merge changes into `main`. `release-please.yml` keeps a release PR up to date.
-2. Review and merge the release PR. On that push Release Please creates the tag `vX.Y.Z` and a
+2. When ready to release, close and reopen the release PR **with your maintainer account** to
+   trigger the normal pull-request CI. The PR is created with `GITHUB_TOKEN`, so its automatic
+   creation and updates do not trigger CI. Wait for the required checks on the **current head**
+   before merging; if Release Please updates it again, close/reopen it again to check that head.
+   Do not bypass branch protection or approve the PR with the bot token.
+3. Review and merge the release PR. On that push Release Please creates the tag `vX.Y.Z` and a
    **draft** GitHub release.
-3. The same workflow run calls `release.yml` with the release SHA: verify (version, manifest,
+4. The same workflow run calls `release.yml` with the release SHA: verify (version, manifest,
    changelog, tag ↔ SHA, formatting, lint, unit tests, build matrix), integration matrix on all
    series, build assets from that SHA, upload, then publish the draft. A release stays a draft
-   until every asset is present.
+   until every asset is present. This call is explicit: releases created with `GITHUB_TOKEN`
+   do not trigger a separate release workflow.
 
 Assets: `branch-review-X.Y.Z-gerrit-{3.12,3.13,3.14}.jar`, `branch-review-X.Y.Z.sha256`,
 `branch-review-X.Y.Z-build-info.json` (source revision, Gerrit releases and tag commits,
@@ -97,12 +103,16 @@ byte-for-byte; `build-info.json` records the toolchain for traceability.
 
 ## Repository setup required (once, by a maintainer)
 
-- GitHub App for releases (contents: write, pull requests: write); store its **Client ID**
-  (`Iv23…`, shown on the App's settings page; not the numeric App ID) as the repository variable
-  `RELEASE_APP_CLIENT_ID` and a private key as the secret `RELEASE_APP_PRIVATE_KEY`, and install
-  it on this repository.
+- No GitHub App, personal access token or additional release secret is required. Release Please
+  uses the built-in `GITHUB_TOKEN`; its job explicitly grants `contents: write` and
+  `pull-requests: write`. The former `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` are
+  no longer used; this migration does not delete repository settings or credentials.
 - Branch protection on `main`: require the CI checks (`Formatting, hooks and static checks`,
   `Conventional Commits (merge input)`, `Unit tests`, `Build / Gerrit 3.x`, `Integration /
   Acceptance + black-box (Gerrit 3.x)` for each series), require PRs, allow squash merge only.
-- Actions settings: allow GitHub Actions to create pull requests is **not** needed (the App
-  creates them). Restrict `GITHUB_TOKEN` default permissions to read.
+- Under **Settings → Actions → General → Workflow permissions**, enable
+  **Allow GitHub Actions to create and approve pull requests**. An organisation policy can
+  restrict this setting; a maintainer must resolve that policy rather than bypass it with
+  another token. The workflow creates PRs but never approves or auto-merges them.
+- Keep the default `GITHUB_TOKEN` permissions read-only. Write permissions are scoped to the
+  release-maintenance and publication jobs; no secrets are forwarded to the release workflow.
