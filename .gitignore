@@ -1,0 +1,21 @@
+# Bazel
+/bazel-*
+user.bazelrc
+# Build outputs and local release staging
+/build/
+/dist/
+# Local tooling state
+.mise.local.toml
+mise.local.toml
+node_modules/
+__pycache__/
+*.pyc
+# Editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+# Never commit credentials
+*.pem
+*.key
+.env

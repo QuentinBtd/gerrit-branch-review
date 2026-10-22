@@ -1,0 +1,331 @@
+// Copyright (C) 2026 The branch-review Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package io.github.quentinbtd.gerrit.branchreview.it;
+
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+
+import com.google.gerrit.entities.Permission;
+import com.google.gerrit.extensions.client.ChangeStatus;
+import com.google.gerrit.extensions.client.SubmitType;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.server.group.SystemGroupBackend;
+import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
+import java.util.List;
+import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
+import org.eclipse.jgit.junit.TestRepository;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.transport.PushResult;
+import org.junit.Test;
+
+public class SubmitIT extends AbstractBranchReviewIT {
+  @com.google.inject.Inject
+  private com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations
+      requestScopeOperations;
+
+  @com.google.inject.Inject
+  private com.google.gerrit.server.permissions.PermissionBackend permissionBackend;
+
+  private static final String FEATURE = "refs/heads/feature/submit-me";
+  private static final String MASTER = "refs/heads/master";
+
+  private RevCommit pushFeature(TestRepository<InMemoryRepository> repo, int n) throws Exception {
+    RevCommit tip = commits(repo, "s", n);
+    assertOk(push(repo, FEATURE), FEATURE);
+    return tip;
+  }
+
+  private void assertOneContributionCommit(ObjectId before, RevCommit sourceTip) throws Exception {
+    ObjectId after = refValue(MASTER);
+    List<RevCommit> added = between(before, after);
+    assertThat(added).hasSize(1);
+    assertThat(added.get(0).getParentCount()).isEqualTo(1);
+    assertThat(added.get(0).getParent(0)).isEqualTo(before);
+    assertThat(isAncestor(sourceTip, after)).isFalse();
+    for (RevCommit c : between(refValue(MASTER), sourceTip)) {
+      assertThat(isAncestor(c, after)).isFalse();
+    }
+    assertThat(fileAt(after, "s/file1.txt")).isEqualTo("s content 1\n");
+  }
+
+  private void submitWith(SubmitType type) throws Exception {
+    enable();
+    setSubmitType(type);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = pushFeature(repo, 3);
+    ObjectId before = refValue(MASTER);
+    approveAndSubmit(onlyChange());
+    assertThat(change(onlyChange()).status).isEqualTo(ChangeStatus.MERGED);
+    assertOneContributionCommit(before, tip);
+  }
+
+  @Test
+  public void fastForwardOnly() throws Exception {
+    submitWith(SubmitType.FAST_FORWARD_ONLY);
+  }
+
+  @Test
+  public void rebaseIfNecessary() throws Exception {
+    submitWith(SubmitType.REBASE_IF_NECESSARY);
+  }
+
+  @Test
+  public void rebaseAlways() throws Exception {
+    submitWith(SubmitType.REBASE_ALWAYS);
+  }
+
+  @Test
+  public void cherryPick() throws Exception {
+    submitWith(SubmitType.CHERRY_PICK);
+  }
+
+  @Test
+  public void mergeIfNecessaryWhenFastForwardPossible() throws Exception {
+    submitWith(SubmitType.MERGE_IF_NECESSARY);
+  }
+
+  @Test
+  public void mergeIfNecessaryBlockedWhenTargetMoved() throws Exception {
+    enable();
+    setSubmitType(SubmitType.MERGE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 2);
+    serverCommit(MASTER, "other.txt", "other\n");
+    int n = onlyChange();
+    ResourceConflictException e =
+        assertThrows(ResourceConflictException.class, () -> approveAndSubmit(n));
+    assertThat(e).hasMessageThat().contains("MERGE_IF_NECESSARY would add a merge commit");
+    assertThat(change(n).status).isEqualTo(ChangeStatus.NEW);
+  }
+
+  @Test
+  public void mergeAlwaysIsBlocked() throws Exception {
+    enable();
+    setSubmitType(SubmitType.MERGE_ALWAYS);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 2);
+    int n = onlyChange();
+    ResourceConflictException e =
+        assertThrows(ResourceConflictException.class, () -> approveAndSubmit(n));
+    assertThat(e).hasMessageThat().contains("MERGE_ALWAYS would add more than one commit");
+  }
+
+  @Test
+  public void targetAdvancesAfterPatchSetUnrelatedWorkIsKept() throws Exception {
+    enable();
+    setSubmitType(SubmitType.REBASE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = pushFeature(repo, 2);
+    RevCommit other = serverCommit(MASTER, "other.txt", "other\n");
+    approveAndSubmit(onlyChange());
+    assertOneContributionCommit(other, tip);
+    assertThat(fileAt(refValue(MASTER), "other.txt")).isEqualTo("other\n");
+  }
+
+  @Test
+  public void targetAdvancedBeforeSquashIsPreserved() throws Exception {
+    enable();
+    setSubmitType(SubmitType.FAST_FORWARD_ONLY);
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit start = repo.getRevWalk().parseCommit(refValue(MASTER));
+    repo.reset(start);
+    // Target changes another file after the branch point but before the first push.
+    RevCommit other = serverCommit(MASTER, "other.txt", "target work\n");
+    RevCommit tip = pushFeature(repo, 2);
+    String rev = change(onlyChange()).currentRevision;
+    assertThat(fileAt(ObjectId.fromString(rev), "other.txt")).isEqualTo("target work\n");
+    approveAndSubmit(onlyChange());
+    assertOneContributionCommit(other, tip);
+    assertThat(fileAt(refValue(MASTER), "other.txt")).isEqualTo("target work\n");
+  }
+
+  @Test
+  public void staleSourceBlocksSubmit() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    // The source moves without synchronization (e.g. a failed or still running sync).
+    serverCommit(FEATURE, "late.txt", "late\n");
+    int n = onlyChange();
+    ResourceConflictException e =
+        assertThrows(ResourceConflictException.class, () -> approveAndSubmit(n));
+    assertThat(e)
+        .hasMessageThat()
+        .contains("has advanced since the current patch set was generated");
+  }
+
+  @Test
+  public void reviewGatesStillApply() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int n = onlyChange();
+    gApi.changes().id(project.get(), n).setReadyForReview();
+    assertThrows(
+        ResourceConflictException.class,
+        () -> gApi.changes().id(project.get(), n).current().submit());
+  }
+
+  @Test
+  public void cleanupIsOffByDefault() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = pushFeature(repo, 1);
+    approveAndSubmit(onlyChange());
+    waitFor(() -> lifecycle(FEATURE).status == Lifecycle.Status.MERGED);
+    assertThat(refValue(FEATURE)).isEqualTo(tip);
+  }
+
+  private void enableCleanup() throws Exception {
+    setConfig(DEFAULT_CONFIG + "  deleteSourceBranchOnSubmit = true\n");
+  }
+
+  @Test
+  public void cleanupDeletesExactSubmittedSourceWhenAuthorized() throws Exception {
+    enableCleanup();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allow(Permission.DELETE)
+                .ref("refs/heads/feature/*")
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 2);
+    approveAndSubmit(onlyChange());
+    waitFor(() -> refValue(FEATURE) == null);
+    Lifecycle lc = lifecycle(FEATURE);
+    assertThat(lc.merge.cleanup).isEqualTo("deleted");
+    // Repeated merge handling is idempotent.
+    plugin
+        .getSysInjector()
+        .getInstance(io.github.quentinbtd.gerrit.branchreview.submit.MergeHandler.class)
+        .handleMerged(project, lc.changeNumber, admin.id().get(), null);
+    assertThat(lifecycle(FEATURE).merge.cleanup).isEqualTo("deleted");
+  }
+
+  @Test
+  public void cleanupSkippedWithoutDeletePermission() throws Exception {
+    enableCleanup();
+    // refs/heads/bugfix/* grants push without force and no delete permission.
+    String bugfix = "refs/heads/bugfix/cleanup";
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = commits(repo, "s", 1);
+    assertOk(push(repo, bugfix), bugfix);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allow(Permission.SUBMIT).ref("refs/heads/*").group(SystemGroupBackend.REGISTERED_USERS))
+        .add(
+            com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel(
+                    "Code-Review")
+                .ref("refs/heads/*")
+                .group(SystemGroupBackend.REGISTERED_USERS)
+                .range(-2, 2))
+        .update();
+    assertThat(
+            permissionBackend
+                .absentUser(user.id())
+                .project(project)
+                .ref(bugfix)
+                .test(com.google.gerrit.server.permissions.RefPermission.DELETE))
+        .isFalse();
+    // Submitted by a non-owner without delete rights on the source branch.
+    requestScopeOperations.setApiUser(user.id());
+    approveAndSubmit(onlyChange());
+    requestScopeOperations.setApiUser(admin.id());
+    waitFor(
+        () ->
+            lifecycle(bugfix).merge != null && !"pending".equals(lifecycle(bugfix).merge.cleanup));
+    assertThat(lifecycle(bugfix).merge.submitter).isEqualTo(user.id().get());
+    assertThat(lifecycle(bugfix).merge.cleanup).isEqualTo("skipped");
+    assertThat(lifecycle(bugfix).merge.cleanupDetail).contains("no delete permission");
+    assertThat(refValue(bugfix)).isEqualTo(tip);
+  }
+
+  @Test
+  public void cleanupSkippedWhenSourceAdvanced() throws Exception {
+    enableCleanup();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int n = onlyChange();
+    var api = gApi.changes().id(project.get(), n);
+    api.setReadyForReview();
+    api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    api.current().submit();
+    // Simulate a push that lands after submit but before cleanup ran.
+    var mh =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.submit.MergeHandler.class);
+    waitFor(
+        () ->
+            lifecycle(FEATURE).merge != null
+                && !"pending".equals(lifecycle(FEATURE).merge.cleanup));
+    assertThat(lifecycle(FEATURE).merge.cleanup).isEqualTo("deleted");
+    {
+      // The branch is recreated at a different commit; a retried cleanup must keep it.
+      RevCommit late = serverCommit(FEATURE, "late.txt", "late\n");
+      try (var r = repoManager.openRepository(project)) {
+        var l = stateStore.loadLifecycle(r, FEATURE);
+        l.value().merge.cleanup = "pending";
+        stateStore.saveLifecycle(r, project, l.value(), l.refId(), "test");
+      }
+      mh.handleMerged(project, n, admin.id().get(), null);
+      assertThat(lifecycle(FEATURE).merge.cleanup).isEqualTo("skipped");
+      assertThat(refValue(FEATURE)).isEqualTo(late);
+    }
+  }
+
+  @Test
+  public void branchReuseAfterSubmitRequiresTargetBasedHistory() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int first = onlyChange();
+    approveAndSubmit(first);
+    waitFor(() -> lifecycle(FEATURE).status == Lifecycle.Status.MERGED);
+
+    // Continuing on the old history would re-submit already submitted work.
+    commits(repo, "more", 1);
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("already submitted as Change " + first);
+    assertThat(changes()).hasSize(1);
+    assertThat(change(first).revisions).hasSize(1);
+
+    // Restart from the target: a fresh lifecycle with only the new work.
+    repo.git()
+        .fetch()
+        .setRemote("origin")
+        .setRefSpecs("refs/heads/master:refs/remotes/origin/master")
+        .call();
+    repo.reset(refValue(MASTER));
+    commits(repo, "next", 1);
+    r = push(repo, "HEAD:" + FEATURE, true);
+    assertThat(joined(r)).contains("created Change");
+    assertThat(changes()).hasSize(2);
+    Lifecycle lc = lifecycle(FEATURE);
+    assertThat(lc.previousChangeNumber).isEqualTo(first);
+    String rev = change(lc.changeNumber).currentRevision;
+    assertThat(between(refValue(MASTER), ObjectId.fromString(rev))).hasSize(1);
+    assertThat(fileAt(ObjectId.fromString(rev), "next/file1.txt")).isNotNull();
+  }
+
+  @Test
+  public void pushAfterMergeNeverAddsPatchSetToMergedChange() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    int n = onlyChange();
+    approveAndSubmit(n);
+    commits(repo, "late", 1);
+    push(repo, FEATURE);
+    assertThat(change(n).revisions).hasSize(1);
+  }
+}

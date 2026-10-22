@@ -1,0 +1,11 @@
+{
+  // Reasonable rules for code-heavy documentation.
+  "config": {
+    "default": true,
+    "MD013": false, // line length: tables and commands are long
+    "MD024": { "siblings_only": true },
+    "MD033": false, // inline HTML (e.g. <details>) is allowed
+    "MD041": false  // CHANGELOG and generated files may not start with a heading
+  },
+  "ignores": ["bazel-*/**", "build/**", "dist/**", "node_modules/**"]
+}

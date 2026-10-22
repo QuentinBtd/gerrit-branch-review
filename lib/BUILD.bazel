@@ -1,0 +1,54 @@
+load("@rules_java//java:java_import.bzl", "java_import")
+load("//tools/bazel:gerrit.bzl", "BOUNCYCASTLE", "GERRIT_SERIES")
+
+package(default_visibility = ["//visibility:public"])
+
+# Compile-only Gerrit plugin API. Gerrit provides these classes at runtime, so
+# they must never be packaged into the plugin JAR.
+java_import(
+    name = "plugin_api",
+    jars = select({
+        "//:gerrit_" + s.replace(".", "_"): ["@gerrit_plugin_api_" + s.replace(".", "_") + "//jar:file"]
+        for s in GERRIT_SERIES
+    }),
+    neverlink = True,
+)
+
+# The same API on the runtime classpath, for tests only.
+java_import(
+    name = "plugin_api_runtime",
+    testonly = True,
+    jars = select({
+        "//:gerrit_" + s.replace(".", "_"): ["@gerrit_plugin_api_" + s.replace(".", "_") + "//jar:file"]
+        for s in GERRIT_SERIES
+    }),
+)
+
+java_import(
+    name = "acceptance_framework",
+    testonly = True,
+    jars = select({
+        "//:gerrit_" + s.replace(".", "_"): ["@gerrit_acceptance_framework_" + s.replace(".", "_") + "//jar:file"]
+        for s in GERRIT_SERIES
+    }),
+)
+
+java_import(
+    name = "bouncycastle",
+    testonly = True,
+    jars = select({
+        "//:gerrit_" + s.replace(".", "_"): [
+            "@bc_%s_%s//jar:file" % (
+                a,
+                BOUNCYCASTLE[s].replace(".", "_"),
+            )
+            for a in [
+                "bcprov",
+                "bcpg",
+                "bcpkix",
+                "bcutil",
+            ]
+        ]
+        for s in GERRIT_SERIES
+    }),
+)

@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Formatting, hooks and static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          bazel-cache: "false"
+      - name: Formatting
+        run: bash tools/scripts/fmt.sh --check
+      - name: prek hooks on all files
+        run: prek run --all-files --show-diff-on-failure
+      - name: Lint
+        run: bash tools/scripts/lint.sh
+      - name: Release policy fixtures (pinned Release Please)
+        run: node --test tools/release/version-policy.test.mjs
+      - name: Renovate configuration
+        run: bash tools/scripts/renovate.sh validate
+
+  conventional-commits:
+    name: Conventional Commits (merge input)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pull request title (becomes the squash commit subject)
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: python3 -I tools/scripts/check_commit_msg.py --subject "$TITLE"
+      - name: Pull request commits
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          rc=0
+          while IFS= read -r sha; do
+            git log -1 --format=%B "$sha" > "$RUNNER_TEMP/msg"
+            python3 -I tools/scripts/check_commit_msg.py "$RUNNER_TEMP/msg" || rc=1
+          done < <(git rev-list --no-merges "$BASE..$HEAD")
+          exit $rc
+      - name: Pushed commits
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          range="$AFTER"
+          if [[ "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then range="$BEFORE..$AFTER"; fi
+          rc=0
+          while IFS= read -r sha; do
+            git log -1 --format=%B "$sha" > "$RUNNER_TEMP/msg"
+            python3 -I tools/scripts/check_commit_msg.py "$RUNNER_TEMP/msg" || rc=1
+          done < <(git rev-list --no-merges "$range" | head -200)
+          exit $rc
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bash tools/scripts/test.sh unit
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-test-reports
+          path: build/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+
+  integration:
+    name: Integration
+    uses: ./.github/workflows/integration.yml
+    with:
+      ref: ${{ github.sha }}

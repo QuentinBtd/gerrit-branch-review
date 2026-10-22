@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build.
+        type: string
+        required: true
+      retention-days:
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Gerrit ${{ matrix.series }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Build plugin JAR
+        env:
+          SERIES: ${{ matrix.series }}
+        run: |
+          jar="$(bash tools/scripts/build.sh "$SERIES" | tail -1)"
+          python3 -I tools/scripts/check_jar.py "$jar" "$(cat version.txt)" \
+            "$(python3 -I -c 'import json,sys; print(json.load(open("tools/gerrit-releases.json"))["series"][sys.argv[1]]["version"])' "$SERIES")"
+          sha256sum "$jar" | tee "$jar.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: branch-review-gerrit-${{ matrix.series }}
+          path: dist/branch-review-*-gerrit-${{ matrix.series }}.jar*
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error

@@ -1,0 +1,58 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@branch_review_version//:version.bzl", "PLUGIN_VERSION")
+load("@rules_java//java:java_binary.bzl", "java_binary")
+load("@rules_java//java:java_library.bzl", "java_library")
+load("//tools/bazel:gerrit.bzl", "GERRIT_RELEASES", "GERRIT_SERIES")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "LICENSE",
+    "version.txt",
+])
+
+# Gerrit series the plugin is compiled and tested against.
+string_flag(
+    name = "gerrit",
+    build_setting_default = "3.14",
+    values = GERRIT_SERIES,
+)
+
+[
+    config_setting(
+        name = "gerrit_" + s.replace(".", "_"),
+        flag_values = {":gerrit": s},
+    )
+    for s in GERRIT_SERIES
+]
+
+java_library(
+    name = "branch_review_lib",
+    srcs = glob(["src/main/java/**/*.java"]),
+    resources = glob(["src/main/resources/**/*"]) + ["LICENSE"],
+    deps = ["//lib:plugin_api"],
+)
+
+# The deploy JAR of this binary is the plugin. The Gerrit API is neverlink and therefore not
+# bundled; the plugin has no other runtime dependencies.
+java_binary(
+    name = "branch_review",
+    create_executable = False,
+    deploy_manifest_lines = [
+        "Gerrit-PluginName: branch-review",
+        "Gerrit-ApiType: plugin",
+        # Stop the old instance (draining its executor) before starting a new one, so two
+        # instances never hold separate in-process branch locks or metric registrations.
+        "Gerrit-ReloadMode: restart",
+        "Gerrit-Module: io.github.quentinbtd.gerrit.branchreview.Module",
+        "Gerrit-SshModule: io.github.quentinbtd.gerrit.branchreview.SshModule",
+        "Implementation-Title: branch-review",
+        "Implementation-Version: " + PLUGIN_VERSION,
+        "Implementation-URL: https://github.com/QuentinBtd/gerrit-branch-review",
+        "Implementation-Vendor: The branch-review Authors",
+    ] + select({
+        ":gerrit_" + s.replace(".", "_"): ["Gerrit-ApiVersion: " + GERRIT_RELEASES[s]]
+        for s in GERRIT_SERIES
+    }),
+    runtime_deps = [":branch_review_lib"],
+)

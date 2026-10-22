@@ -1,0 +1,42 @@
+{
+  "series": {
+    "3.12": {
+      "version": "3.12.11",
+      "tagCommit": "748845aa72968f6a851ee250fcbdd191ca99f857",
+      "pluginApiSha256": "3c66ba2785a976b09a101d452ff7c86333a0c6b9e98374e73d2105717e03880c",
+      "acceptanceFrameworkSha256": "bacfb25d8e17d888d41159077148c513115fd573b2fcad274915c1ce5a3f10e9",
+      "bouncycastle": "1.80",
+      "image": "gerritcodereview/gerrit:3.12.11-ubuntu24@sha256:4cdc112bbd777a2f386f6c2c637d325c5304cdf5dfe87bed1b070d4e9ade70ed"
+    },
+    "3.13": {
+      "version": "3.13.10",
+      "tagCommit": "f9e70cda0327381db8d739f017ccb05dd90ee681",
+      "pluginApiSha256": "a1f84f10a909d0177a86b650191e6aed8535eb7a6712bdb41a1b2fb149f0b82e",
+      "acceptanceFrameworkSha256": "3e236e61ffbd445e5ea035df54d9367334d998ab56e916631428db7d170b04f1",
+      "bouncycastle": "1.80",
+      "image": "gerritcodereview/gerrit:3.13.10-ubuntu24@sha256:8ed036c8841aa5229a8e745fc62a57c83ef0e32ee1dc30304ee1f3c15084298d"
+    },
+    "3.14": {
+      "version": "3.14.4",
+      "tagCommit": "6d038645483357e8f72df648dcb2c4d7aa1914c9",
+      "pluginApiSha256": "c20279b85a339b835b2b8cccf17cf02d5f0dd00b30a8cd137cd2971f5db8d1bc",
+      "acceptanceFrameworkSha256": "418b8dc93a6ce07d0fd5819b0968798c9d4c0c2b8c4d22aae7c6e14d8f71caf6",
+      "bouncycastle": "1.84",
+      "image": "gerritcodereview/gerrit:3.14.4-ubuntu24@sha256:e3b5871b900079abc67d0705dad04e579c231da9f89b9d26be9de044696bae12"
+    }
+  },
+  "bouncycastle": {
+    "1.80": {
+      "bcprov": "e8ad209f8c58d291a37ca9750e9e9fac60596956c983e49dd8282381dd8b3249",
+      "bcpg": "3799a0d53511b860780af43c44ae8e0519afabb263195af40174f46312cd58bd",
+      "bcpkix": "4f4ba6a92617ea19dc183f0fa5db492eee426fdde2a0a2d6c94777ffd1af6413",
+      "bcutil": "22eca687f7955411f456af33e6ea8e68fc73cd80cb8b32aa5f7a8b1827d7c678"
+    },
+    "1.84": {
+      "bcprov": "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731",
+      "bcpg": "c0e6303a0d7589040f400950ecee87a14b81312e84ed15e5390ebb0c4566ddab",
+      "bcpkix": "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb",
+      "bcutil": "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a"
+    }
+  }
+}

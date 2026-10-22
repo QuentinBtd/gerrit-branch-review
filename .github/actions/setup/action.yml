@@ -1,0 +1,26 @@
+name: Set up toolchain
+description: Installs the pinned mise and the tools from .mise.toml / mise.lock.
+inputs:
+  bazel-cache:
+    description: Restore and save the Bazel disk cache.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install mise and pinned tools
+      uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      with:
+        version: 2026.9.18 # kept in sync with min_version in .mise.toml (Renovate group "mise")
+        install: true
+        cache: true
+    - name: Bazel disk cache
+      if: inputs.bazel-cache == 'true'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: ~/.cache/bazel-disk
+        key: bazel-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'tools/gerrit-releases.json') }}-${{ github.sha }}
+        restore-keys: |
+          bazel-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'tools/gerrit-releases.json') }}-
+    - name: Use CI Bazel settings
+      shell: bash
+      run: printf 'common --config=ci\n' > user.bazelrc

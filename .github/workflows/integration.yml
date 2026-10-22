@@ -1,0 +1,50 @@
+name: Integration
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to test.
+        type: string
+        required: true
+  schedule:
+    # Weekly run against the pinned images, independent of code changes.
+    - cron: "17 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: Acceptance + black-box (Gerrit ${{ matrix.series }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: In-process acceptance tests
+        env:
+          SERIES: ${{ matrix.series }}
+        run: bash tools/scripts/test.sh acceptance "$SERIES"
+      - name: Black-box tests (packaged JAR, real SSH and smart HTTP)
+        env:
+          SERIES: ${{ matrix.series }}
+        run: bash tools/scripts/test.sh blackbox "$SERIES"
+      - name: Upload reports and server logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-${{ matrix.series }}
+          path: |
+            build/test-results/${{ matrix.series }}/
+            bazel-testlogs/**/test.log
+          retention-days: 14
+          if-no-files-found: ignore

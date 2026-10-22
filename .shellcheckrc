@@ -1,0 +1,5 @@
+# Scripts source tools/scripts/lib.sh relative to their own directory.
+source-path=SCRIPTDIR
+external-sources=true
+# lib.sh enables `set -euo pipefail`, so a failing `cd` already aborts the script.
+disable=SC2164

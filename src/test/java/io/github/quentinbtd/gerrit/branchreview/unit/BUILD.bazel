@@ -1,0 +1,3 @@
+load("//tools/bazel:tests.bzl", "unit_tests")
+
+unit_tests(srcs = glob(["*Test.java"]))

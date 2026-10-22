@@ -1,0 +1,34 @@
+"""branch-review Gerrit plugin.
+
+The plugin is compiled against the exact Gerrit plugin API and acceptance
+framework artifacts published on Maven Central for each supported Gerrit
+release. Select the release with --//:gerrit=3.12|3.13|3.14 (default 3.14).
+"""
+
+module(name = "branch_review")
+
+bazel_dep(name = "rules_java", version = "9.6.1")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+
+version = use_extension("//tools/bazel:version.bzl", "plugin_version")
+use_repo(version, "branch_review_version")
+
+gerrit = use_extension("//tools/bazel:gerrit_deps.bzl", "gerrit")
+use_repo(
+    gerrit,
+    "bc_bcpg_1_80",
+    "bc_bcpg_1_84",
+    "bc_bcpkix_1_80",
+    "bc_bcpkix_1_84",
+    "bc_bcprov_1_80",
+    "bc_bcprov_1_84",
+    "bc_bcutil_1_80",
+    "bc_bcutil_1_84",
+    "gerrit_acceptance_framework_3_12",
+    "gerrit_acceptance_framework_3_13",
+    "gerrit_acceptance_framework_3_14",
+    "gerrit_plugin_api_3_12",
+    "gerrit_plugin_api_3_13",
+    "gerrit_plugin_api_3_14",
+    "gerrit_releases",
+)

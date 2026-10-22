@@ -1,0 +1,11 @@
+line-length = 110
+target-version = "py313"
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "S"]
+# S603/S607: the scripts intentionally run git, docker and ssh with argument lists.
+# S310: urllib is only used against fixed, test-local or upstream release URLs.
+ignore = ["S603", "S607", "S310", "S101", "UP031"]
+
+[format]
+quote-style = "double"

@@ -1,0 +1,158 @@
+{
+  // Repository policy for the self-hosted Renovate bot (.github/workflows/renovate.yml).
+  // Bot-only settings (platform, repository allowlist, credentials, allowed commands) live in
+  // .github/renovate/bot-config.json5 and are not read from here.
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommits", ":disableRateLimiting"],
+  "timezone": "Etc/UTC",
+  "schedule": ["before 6am on monday"],
+  // Conventional Commit messages compatible with Release Please: dependency bumps use the
+  // "deps" type (listed in the changelog), tooling-only bumps use "chore"/"ci".
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "commitMessageLowerCase": "auto",
+  // Bounded PR volume; human review is the default.
+  "prConcurrentLimit": 6,
+  "prHourlyLimit": 2,
+  "branchConcurrentLimit": 10,
+  "automerge": false,
+  "platformAutomerge": false,
+  "rebaseWhen": "conflicted",
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  // Managers actually used in this repository. Ruff/ruff.toml and Python scripts have no
+  // third-party dependencies to track.
+  "enabledManagers": ["mise", "github-actions", "bazel-module", "bazelisk", "pre-commit", "custom.regex"],
+  // prek's built-in hooks have no revision; enabled so remote hook repositories added later are
+  // tracked (the pre-commit manager is opt-in in Renovate).
+  "pre-commit": { "enabled": true },
+  "github-actions": {
+    // Keep full-SHA pins with readable version comments.
+    "pinDigests": true
+  },
+  "customManagers": [
+    {
+      // Gerrit patch releases per supported series. Only the version is bumped by Renovate;
+      // the coupled tag commit, JAR checksums and image digest are recomputed by the
+      // allowlisted post-upgrade task below so that a PR is never half-updated.
+      "customType": "regex",
+      "description": "Gerrit releases in tools/gerrit-releases.json",
+      "managerFilePatterns": ["/^tools/gerrit-releases\\.json$/"],
+      "matchStrings": ["\"(?<depName>3\\.\\d+)\":\\s*\\{\\s*\"version\":\\s*\"(?<currentValue>[0-9.]+)\""],
+      "datasourceTemplate": "maven",
+      "packageNameTemplate": "com.google.gerrit:gerrit-plugin-api",
+      "depTypeTemplate": "gerrit-series",
+      "versioningTemplate": "maven"
+    },
+    {
+      // Renovate's own container image used by the workflow and local tasks.
+      "customType": "regex",
+      // The workflow's renovate-version input is tracked natively by the github-actions
+      // manager; this covers the local task script, which must stay on the same image.
+      "description": "Renovate image pin in the local task script",
+      "managerFilePatterns": ["/^tools/scripts/renovate\\.sh$/"],
+      "matchStrings": ["ghcr\\.io/renovatebot/renovate:(?<currentValue>[0-9.]+)-full@(?<currentDigest>sha256:[a-f0-9]{64})"],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "ghcr.io/renovatebot/renovate",
+      "versioningTemplate": "semver"
+    },
+    {
+      // Minimum mise version in .mise.toml; the CI mise version is the mise-action "version"
+      // input, tracked natively by the github-actions manager. Group both via packageRules.
+      "customType": "regex",
+      "description": "mise min_version in .mise.toml",
+      "managerFilePatterns": ["/^\\.mise\\.toml$/"],
+      "matchStrings": ["min_version = \"(?<currentValue>[0-9.]+)\""],
+      "depNameTemplate": "jdx/mise",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "loose"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Wait two weeks before proposing new releases (supply-chain safety).",
+      "matchPackageNames": ["*"],
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Gerrit stays within each explicitly supported series; series changes are deliberate.",
+      "matchDepTypes": ["gerrit-series"],
+      "matchDepNames": ["3.12"],
+      "allowedVersions": "/^3\\.12\\.\\d+$/"
+    },
+    {
+      "matchDepTypes": ["gerrit-series"],
+      "matchDepNames": ["3.13"],
+      "allowedVersions": "/^3\\.13\\.\\d+$/"
+    },
+    {
+      "matchDepTypes": ["gerrit-series"],
+      "matchDepNames": ["3.14"],
+      "allowedVersions": "/^3\\.14\\.\\d+$/"
+    },
+    {
+      "description": "Gerrit compatibility updates: one PR per series, re-pinned by the reviewed script.",
+      "matchDepTypes": ["gerrit-series"],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "gerrit",
+      "commitMessageTopic": "Gerrit {{depName}}",
+      "additionalBranchPrefix": "gerrit-{{depName}}-",
+      "labels": ["dependencies", "gerrit-compatibility"],
+      "postUpgradeTasks": {
+        "commands": ["python3 -I tools/scripts/pin_gerrit.py"],
+        "fileFilters": ["tools/gerrit-releases.json"],
+        "executionMode": "branch"
+      }
+    },
+    {
+      "description": "Runtime-relevant build inputs are user-visible changes in the changelog.",
+      "matchManagers": ["bazel-module"],
+      "semanticCommitType": "build",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "CI-only updates.",
+      "matchManagers": ["github-actions"],
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps",
+      "groupName": "GitHub Actions",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"]
+    },
+    {
+      "description": "Development tools pinned by mise: group safe updates, keep majors separate.",
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "development tools",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "tools"
+    },
+    {
+      "description": "The JDK and Bazel follow Gerrit's requirements; never jump major lines automatically.",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["java"],
+      "allowedVersions": "/^temurin-21\\./"
+    },
+    {
+      "description": "Bazel itself is pinned by .bazelversion; keep the 8.x line used by the build.",
+      "matchDepNames": ["bazel"],
+      "allowedVersions": "<9"
+    },
+    {
+      "description": "Keep the CI mise version and the documented minimum in one PR.",
+      "matchDepNames": ["jdx/mise"],
+      "groupName": "mise",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Major updates always get their own PR and the dashboard approval gate.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

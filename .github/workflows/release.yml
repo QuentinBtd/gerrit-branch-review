@@ -1,0 +1,126 @@
+name: Release
+
+# Builds, verifies and publishes release assets for an exact revision.
+# - Called by release-please.yml after Release Please created the (draft) release vX.Y.Z.
+# - Manually dispatched to retry a stable publication, or to publish an explicit release
+#   candidate X.Y.Z-rc.N (marked as a GitHub prerelease; Release Please state is not touched).
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      ref:
+        description: Commit SHA of the release.
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (X.Y.Z to retry a stable release, X.Y.Z-rc.N for a candidate)
+        required: true
+      ref:
+        description: Commit SHA to build (stable releases must match tag vX.Y.Z)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  # Never interrupt a publication half way; a retry is idempotent instead.
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Revision must be on main
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$REF" origin/main || { echo "::error::$REF is not on main"; exit 1; }
+      - uses: ./.github/actions/setup
+        with:
+          bazel-cache: "false"
+      - name: Version, tag and source consistency + local gates
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref }}
+          RELEASE_SKIP_MATRIX: "1" # the integration matrix runs as its own required job below
+        run: bash tools/scripts/release.sh verify "$VERSION" "$REF"
+
+  integration:
+    name: Release gate
+    needs: verify
+    uses: ./.github/workflows/integration.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  build:
+    name: Build assets
+    needs: [verify, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+      # No shared cache in the release build: inputs come only from checksum-pinned downloads.
+      - uses: ./.github/actions/setup
+        with:
+          bazel-cache: "false"
+      - name: Build release assets from the exact revision
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref }}
+        run: bash tools/scripts/release.sh build "$VERSION" "$REF"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ inputs.version }}
+          path: dist/release/${{ inputs.version }}/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ inputs.version }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ inputs.version }}
+          path: dist/release/${{ inputs.version }}
+      - name: Upload assets (idempotent, never overwrites different content)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: bash tools/scripts/release.sh publish "$VERSION"
+      - name: Publish the draft once all assets are present
+        if: ${{ !contains(inputs.version, '-rc.') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          for f in dist/release/"$VERSION"/*; do
+            gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+              grep -qx "$(basename "$f")" || { echo "::error::missing asset $(basename "$f")"; exit 1; }
+          done
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest

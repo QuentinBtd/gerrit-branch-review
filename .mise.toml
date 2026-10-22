@@ -1,0 +1,137 @@
+# Development toolchain and task entry points for branch-review.
+#
+# Install mise itself first (pinned version: see docs/development.md and the CI workflows,
+# which pin it separately), then: `mise trust && mise install && mise run doctor`.
+# Every task delegates to a script under tools/scripts so that CI and local runs share one
+# implementation.
+min_version = "2026.9.18"
+
+[settings]
+lockfile = true
+
+[env]
+# Keep Bazel's output base per checkout; CI overrides the disk cache location.
+BRANCH_REVIEW_ROOT = "{{config_root}}"
+
+[tools]
+# Build and runtime
+java = "temurin-21.0.12+8.0.LTS"
+bazelisk = "1.29.0"
+# Hooks and linters
+prek = "0.5.5"
+"aqua:google/google-java-format" = "1.37.0"
+buildifier = "10.1.0"
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
+actionlint = "1.7.12"
+taplo = "0.10.0"
+ruff = "0.16.10"
+"pipx:check-jsonschema" = "0.38.2"
+uv = "0.12.23"
+# Black-box harness and helper scripts
+python = "3.13.16"
+# Release, dependency and documentation tooling (npm packages run on the pinned Node)
+node = "24.22.1"
+"npm:release-please" = "17.11.2"
+"npm:markdownlint-cli2" = "0.23.3"
+gh = "2.102.0"
+
+[tasks.doctor]
+description = "Report pinned tools, host prerequisites and container availability"
+run = "bash tools/scripts/doctor.sh"
+
+[tasks.setup]
+description = "Prepare the development environment and fetch verified build inputs"
+run = "bash tools/scripts/setup.sh"
+
+[tasks."hooks:install"]
+description = "Install prek hooks (pre-commit and commit-msg stages)"
+run = "prek install --install-hooks -t pre-commit -t commit-msg"
+
+[tasks."hooks:run"]
+description = "Run every configured hook against all files"
+run = "prek run --all-files --show-diff-on-failure"
+
+[tasks.fmt]
+description = "Apply formatting (Java, Starlark, shell, Python, TOML)"
+run = "bash tools/scripts/fmt.sh"
+
+[tasks."fmt:check"]
+description = "Check formatting without modifying files"
+run = "bash tools/scripts/fmt.sh --check"
+
+[tasks.lint]
+description = "Lint build files, scripts, workflows and configuration"
+run = "bash tools/scripts/lint.sh"
+
+[tasks.build]
+description = "Build the Gerrit 3.14 artifact into dist/ (pass a series to override)"
+run = "bash tools/scripts/build.sh"
+
+[tasks."build:matrix"]
+description = "Build the artifact for every supported Gerrit series"
+run = "bash tools/scripts/build.sh all"
+
+[tasks.test]
+description = "Run fast unit tests"
+run = "bash tools/scripts/test.sh unit"
+
+[tasks."test:integration"]
+description = "Acceptance tests plus black-box SSH/HTTP tests for one series (default 3.14)"
+run = "bash tools/scripts/test.sh integration"
+
+[tasks."test:matrix"]
+description = "Run the full test suite for every supported Gerrit series"
+run = "bash tools/scripts/test.sh matrix"
+
+[tasks.verify]
+description = "Local equivalent of the required CI checks (no publication)"
+run = "bash tools/scripts/verify.sh"
+
+[tasks."dev:up"]
+description = "Start a disposable local Gerrit with the plugin installed"
+run = "bash tools/scripts/dev.sh up"
+
+[tasks."dev:down"]
+description = "Stop and remove the local Gerrit started by dev:up"
+run = "bash tools/scripts/dev.sh down"
+
+[tasks."dev:logs"]
+description = "Show the local Gerrit server and plugin logs"
+run = "bash tools/scripts/dev.sh logs"
+
+[tasks.package]
+description = "Collect versioned JARs, checksums and build metadata into dist/"
+run = "bash tools/scripts/package.sh"
+
+[tasks."release:plan"]
+description = "Preview the next version and changelog with Release Please (needs a GitHub token)"
+run = "bash tools/scripts/release.sh plan"
+
+[tasks."release:verify"]
+description = "Check version/tag/source consistency and run the release gates"
+run = "bash tools/scripts/release.sh verify"
+
+[tasks."release:build"]
+description = "Build release assets for an explicit version and revision"
+run = "bash tools/scripts/release.sh build"
+
+[tasks."release:publish"]
+description = "Upload already verified assets to the GitHub release (explicit, authenticated)"
+run = "bash tools/scripts/release.sh publish"
+
+[tasks."renovate:validate"]
+description = "Validate the Renovate repository and bot configuration"
+run = "bash tools/scripts/renovate.sh validate"
+
+[tasks."renovate:dry-run"]
+description = "Run the pinned Renovate bot in a no-write mode (needs a GitHub token)"
+run = "bash tools/scripts/renovate.sh dry-run"
+
+[tasks."renovate:run"]
+description = "Run the pinned Renovate bot for real (explicit, authenticated)"
+run = "bash tools/scripts/renovate.sh run"
+
+[tasks.clean]
+description = "Remove generated project files (pass --all to also drop Bazel caches)"
+run = "bash tools/scripts/clean.sh"

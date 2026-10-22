@@ -1,0 +1,26 @@
+common --enable_bzlmod
+common --lockfile_mode=error
+
+build --java_language_version=21
+build --java_runtime_version=remotejdk_21
+build --tool_java_language_version=21
+build --tool_java_runtime_version=remotejdk_21
+build --incompatible_strict_action_env
+build --stamp=false
+
+test --test_output=errors
+test --test_verbose_timeout_warnings
+
+# Per-target output trees so 3.12/3.13/3.14 builds do not invalidate each other.
+build:gerrit-3.12 --//:gerrit=3.12
+build:gerrit-3.13 --//:gerrit=3.13
+build:gerrit-3.14 --//:gerrit=3.14
+
+try-import %workspace%/user.bazelrc
+
+# CI: local disk cache restored by actions/cache (keyed on build inputs).
+build:ci --disk_cache=~/.cache/bazel-disk
+common:ci --repository_cache=~/.cache/bazel-disk/repos
+build:ci --noshow_progress
+build:ci --show_timestamps
+test:ci --test_output=errors
