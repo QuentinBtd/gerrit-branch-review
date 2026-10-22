@@ -367,29 +367,37 @@ public class SubmitIT extends AbstractBranchReviewIT {
             .getSysInjector()
             .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
     var release = new java.util.concurrent.CountDownLatch(1);
-    // Fill the queue so that the merge event cannot be scheduled.
-    assertThat(
-            executor.execute(
-                () -> {
-                  try {
-                    release.await();
-                  } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                  }
-                }))
-        .isTrue();
     try {
+      // Push completion can precede the previous worker's admission-slot release.
+      waitFor(
+          () ->
+              executor.execute(
+                  () -> {
+                    try {
+                      release.await();
+                    } catch (InterruptedException ex) {
+                      Thread.currentThread().interrupt();
+                    }
+                  }));
       approveAndSubmit(n);
       assertThat(lifecycle(FEATURE).merge).isNull();
     } finally {
       release.countDown();
     }
-    waitFor(() -> executor.execute(() -> {}));
+    // With one worker, this barrier runs after the blocker has released its admission slot.
+    executor.pool().submit(() -> {}).get(10, java.util.concurrent.TimeUnit.SECONDS);
     plugin
         .getSysInjector()
         .getInstance(io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class)
         .runOnce();
-    waitFor(() -> refValue(FEATURE) == null);
+    // Ref deletion happens before the final lifecycle write; wait for both effects.
+    waitFor(
+        () -> {
+          Lifecycle current = lifecycle(FEATURE);
+          return current.merge != null
+              && "deleted".equals(current.merge.cleanup)
+              && refValue(FEATURE) == null;
+        });
     Lifecycle lc = lifecycle(FEATURE);
     assertThat(lc.merge.submitter).isEqualTo(admin.id().get());
     assertThat(lc.merge.cleanup).isEqualTo("deleted");
