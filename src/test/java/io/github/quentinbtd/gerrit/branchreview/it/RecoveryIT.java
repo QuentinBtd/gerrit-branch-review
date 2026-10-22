@@ -252,6 +252,55 @@ public class RecoveryIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.threads",
+      value = "1")
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.maxQueued",
+      value = "1")
+  public void droppedEditEventIsRecovered() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    commits(repo, "a", 1);
+    push(repo, FEATURE);
+    int n = onlyChange();
+    var before = refValue(FEATURE);
+    var executor =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    assertThat(
+            executor.execute(
+                () -> {
+                  try {
+                    release.await();
+                  } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                  }
+                }))
+        .isTrue();
+    try {
+      // The edit event cannot be queued.
+      var edit = gApi.changes().id(project.get(), n).edit();
+      edit.create();
+      edit.modifyFile("a/file1.txt", com.google.gerrit.common.RawInputUtil.create("edited\n"));
+      edit.publish();
+    } finally {
+      release.countDown();
+    }
+    waitFor(() -> executor.execute(() -> {}));
+    assertThat(refValue(FEATURE)).isEqualTo(before);
+    int backlog = plugin.getSysInjector().getInstance(RecoveryService.class).runOnce();
+    assertThat(backlog).isEqualTo(1);
+    waitFor(() -> !refValue(FEATURE).equals(before));
+    waitFor(() -> refValue(FEATURE).name().equals(lifecycle(FEATURE).lastSourceId));
+    assertThat(fileAt(refValue(FEATURE), "a/file1.txt")).isEqualTo("edited\n");
+    // Nothing left to do afterwards.
+    assertThat(plugin.getSysInjector().getInstance(RecoveryService.class).runOnce()).isEqualTo(0);
+  }
+
+  @Test
   public void concurrentSynchronizationCreatesOneChange() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(user);

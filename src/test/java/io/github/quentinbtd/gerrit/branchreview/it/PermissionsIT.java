@@ -263,6 +263,44 @@ public class PermissionsIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void invisibleChangeIsNotRevealedThroughPushOrStatus() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> adminRepo = cloneAs(admin);
+    commits(adminRepo, "a", 1);
+    push(adminRepo, FEATURE);
+    int n = onlyChange();
+    serverCommit("refs/heads/secret-stable", "s.txt", "s\n");
+    gApi.changes().id(project.get(), n).setPrivate(true);
+    gApi.changes().id(project.get(), n).move("secret-stable");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            block(Permission.READ)
+                .ref("refs/heads/secret-stable")
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
+    // The admin's own push records the moved state (and its destination) in the lifecycle.
+    commits(adminRepo, "b", 1);
+    assertThat(joined(push(adminRepo, FEATURE))).contains("secret-stable");
+
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    repo.git().fetch().setRemote("origin").setRefSpecs("+" + FEATURE + ":" + FEATURE).call();
+    repo.reset(refValue(FEATURE));
+    commits(repo, "c", 1);
+    PushResult r = push(repo, FEATURE);
+    assertOk(r, FEATURE);
+    String out = joined(r);
+    assertThat(out).contains("not visible to you");
+    assertThat(out).doesNotContain("secret-stable");
+    assertThat(out).doesNotContain("/+/" + n);
+    assertThat(out).doesNotContain("Change " + n);
+    String status = status(user, FEATURE).getEntityContent();
+    assertThat(status).doesNotContain("secret-stable");
+    assertThat(status).doesNotContain("change_number");
+  }
+
+  @Test
   public void syncRequiresPushPermissionOnSource() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(admin);

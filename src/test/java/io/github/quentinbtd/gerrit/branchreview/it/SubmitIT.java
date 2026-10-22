@@ -23,6 +23,9 @@ import org.junit.Test;
 
 public class SubmitIT extends AbstractBranchReviewIT {
   @com.google.inject.Inject
+  private com.google.gerrit.acceptance.ExtensionRegistry extensionRegistry;
+
+  @com.google.inject.Inject
   private com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations
       requestScopeOperations;
 
@@ -155,7 +158,7 @@ public class SubmitIT extends AbstractBranchReviewIT {
         assertThrows(
             ResourceConflictException.class,
             () -> gApi.changes().id(project.get(), a).current().submit());
-    assertThat(e).hasMessageThat().contains("with a merge commit");
+    assertThat(e).hasMessageThat().contains("through a merge commit");
     assertThat(refValue(MASTER)).isEqualTo(before);
     assertThat(change(a).status).isEqualTo(ChangeStatus.NEW);
     assertThat(change(b).status).isEqualTo(ChangeStatus.NEW);
@@ -184,6 +187,143 @@ public class SubmitIT extends AbstractBranchReviewIT {
     for (RevCommit c : added) {
       assertThat(c.getParentCount()).isEqualTo(1);
     }
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "change.submitWholeTopic",
+      value = "true")
+  public void topicWithAnOrdinaryChildStillCannotAddAMerge() throws Exception {
+    enable();
+    setSubmitType(SubmitType.MERGE_IF_NECESSARY);
+    TestRepository<InMemoryRepository> repo = cloneAs(admin);
+    int a = pushBranch(repo, "refs/heads/feature/one", "one");
+    int b = pushBranch(repo, "refs/heads/feature/two", "two");
+    // An ordinary review on top of b's patch set.
+    repo.git()
+        .fetch()
+        .setRemote("origin")
+        .setRefSpecs(change(b).revisions.get(change(b).currentRevision).ref + ":refs/heads/b")
+        .call();
+    repo.reset(ObjectId.fromString(change(b).currentRevision));
+    repo.branch("HEAD")
+        .commit()
+        .author(admin.newIdent())
+        .committer(admin.newIdent())
+        .insertChangeId()
+        .message("ordinary child")
+        .add("child.txt", "c\n")
+        .create();
+    assertOk(
+        push(repo, "HEAD:refs/for/master%topic=together", false), "refs/for/master%topic=together");
+    ObjectId before = refValue(MASTER);
+    for (var c : changes()) {
+      var api = gApi.changes().id(project.get(), c._number);
+      api.topic("together");
+      if (Boolean.TRUE.equals(api.get().workInProgress)) {
+        api.setReadyForReview();
+      }
+      api.current().review(com.google.gerrit.extensions.api.changes.ReviewInput.approve());
+    }
+    ResourceConflictException e =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> gApi.changes().id(project.get(), a).current().submit());
+    assertThat(e).hasMessageThat().contains("through a merge commit");
+    assertThat(refValue(MASTER)).isEqualTo(before);
+  }
+
+  @Test
+  public void maintenanceMergeOfASubmittedReviewIsAllowed() throws Exception {
+    enable();
+    ObjectId start = refValue(MASTER);
+    serverCommit("refs/heads/stable", "stable.txt", "s\n");
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    pushFeature(repo, 1);
+    approveAndSubmit(onlyChange());
+    waitFor(() -> lifecycle(FEATURE).status == Lifecycle.Status.MERGED);
+    assertThat(start).isNotNull();
+    // An ordinary review merging master (with the submitted review commit) into stable.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allow(Permission.PUSH_MERGE)
+                .ref("refs/for/refs/heads/stable")
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
+    TestRepository<InMemoryRepository> admin = cloneAs(this.admin);
+    admin
+        .git()
+        .fetch()
+        .setRemote("origin")
+        .setRefSpecs("+refs/heads/*:refs/remotes/origin/*")
+        .call();
+    RevCommit merge =
+        admin
+            .commit()
+            .parent(admin.getRevWalk().parseCommit(refValue("refs/heads/stable")))
+            .parent(admin.getRevWalk().parseCommit(refValue(MASTER)))
+            .author(this.admin.newIdent())
+            .committer(this.admin.newIdent())
+            .insertChangeId()
+            .message("Merge master into stable")
+            .add("stable.txt", "s\n")
+            .add("s/file1.txt", "s content 1\n")
+            .create();
+    assertOk(push(admin, merge.name() + ":refs/for/stable", false), "refs/for/stable");
+    var mergeChange =
+        gApi.changes().query("project:" + project.get() + " branch:stable").get().get(0)._number;
+    approveAndSubmit(mergeChange);
+    assertThat(change(mergeChange).status).isEqualTo(ChangeStatus.MERGED);
+  }
+
+  /** Rejects deletions of feature branches, like a site branch-protection plugin. */
+  private static final class NoFeatureDeletion
+      implements com.google.gerrit.server.git.validators.RefOperationValidationListener {
+    @Override
+    public List<com.google.gerrit.server.git.validators.ValidationMessage> onRefOperation(
+        com.google.gerrit.server.events.RefReceivedEvent e)
+        throws com.google.gerrit.server.validators.ValidationException {
+      if (e.command.getType() == org.eclipse.jgit.transport.ReceiveCommand.Type.DELETE
+          && e.getRefName().startsWith("refs/heads/feature/")) {
+        throw new com.google.gerrit.server.validators.ValidationException(
+            "feature branches are kept by policy");
+      }
+      return List.of();
+    }
+  }
+
+  @Test
+  public void cleanupRespectsDeletionValidators() throws Exception {
+    enableCleanup();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allow(Permission.DELETE)
+                .ref("refs/heads/feature/*")
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    RevCommit tip = pushFeature(repo, 1);
+    try (var reg = extensionRegistry.newRegistration().add(new NoFeatureDeletion())) {
+      // The policy rejects a normal deletion ...
+      var r = push(repo, ":" + FEATURE, true);
+      assertThat(r.getRemoteUpdate(FEATURE).getStatus())
+          .isNotEqualTo(org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK);
+      // ... and therefore the cleanup too.
+      approveAndSubmit(onlyChange());
+      waitFor(
+          () ->
+              lifecycle(FEATURE).merge != null
+                  && !"pending".equals(lifecycle(FEATURE).merge.cleanup)
+                  && !"none".equals(lifecycle(FEATURE).merge.cleanup));
+    }
+    Lifecycle lc = lifecycle(FEATURE);
+    assertThat(lc.merge.cleanup).isEqualTo("skipped");
+    assertThat(lc.merge.cleanupDetail).contains("feature branches are kept by policy");
+    assertThat(refValue(FEATURE)).isEqualTo(tip);
   }
 
   @Test

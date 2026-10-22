@@ -3,20 +3,26 @@
 
 package io.github.quentinbtd.gerrit.branchreview.submit;
 
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
+import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.git.validators.RefOperationValidationException;
+import com.google.gerrit.server.git.validators.RefOperationValidators;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
+import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType;
 import com.google.inject.Inject;
@@ -37,6 +43,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.transport.ReceiveCommand;
 
 /**
  * Closes a lifecycle when its Change is merged and performs the optional source branch cleanup.
@@ -64,6 +71,9 @@ public class MergeHandler implements ChangeMergedListener {
   private final AccountCache accountCache;
   private final Metrics metrics;
   private final ApprovalsUtil approvalsUtil;
+  private final RefOperationValidators.Factory refValidatorsFactory;
+  private final IdentifiedUser.GenericFactory userFactory;
+  private final ProjectCache projectCache;
 
   @Inject
   MergeHandler(
@@ -78,7 +88,13 @@ public class MergeHandler implements ChangeMergedListener {
       GitReferenceUpdated gitRefUpdated,
       AccountCache accountCache,
       Metrics metrics,
-      ApprovalsUtil approvalsUtil) {
+      ApprovalsUtil approvalsUtil,
+      RefOperationValidators.Factory refValidatorsFactory,
+      IdentifiedUser.GenericFactory userFactory,
+      ProjectCache projectCache) {
+    this.refValidatorsFactory = refValidatorsFactory;
+    this.userFactory = userFactory;
+    this.projectCache = projectCache;
     this.approvalsUtil = approvalsUtil;
     this.repoManager = repoManager;
     this.store = store;
@@ -182,6 +198,7 @@ public class MergeHandler implements ChangeMergedListener {
     Lifecycle.Merge m = lc.merge;
     String outcome;
     String detail;
+    String rejection;
     BranchReviewConfig cfg = configLoader.load(project);
     Ref src = repo.exactRef(lc.sourceRef);
     if (!cfg.isEnabled() || !cfg.deleteSourceBranchOnSubmit()) {
@@ -200,6 +217,10 @@ public class MergeHandler implements ChangeMergedListener {
     } else if (!mayDelete(project, lc.sourceRef, m.submitter)) {
       outcome = "skipped";
       detail = "submitter has no delete permission on the branch";
+    } else if ((rejection = deletionRejected(project, lc.sourceRef, src.getObjectId(), m.submitter))
+        != null) {
+      outcome = "skipped";
+      detail = "deletion rejected by validation: " + rejection;
     } else {
       RefUpdate ru = repo.updateRef(lc.sourceRef);
       ru.setExpectedOldObjectId(ObjectId.fromString(m.submittedSourceId));
@@ -246,6 +267,32 @@ public class MergeHandler implements ChangeMergedListener {
   private int storedSubmitter(ChangeNotes notes) {
     PatchSetApproval a = approvalsUtil.getSubmitter(notes, notes.getChange().currentPatchSetId());
     return a == null ? 0 : a.accountId().get();
+  }
+
+  /**
+   * Runs the ref operation validators Gerrit applies when the submitter deletes {@code ref}
+   * themself. Returns the rejection message, or {@code null} if the deletion is allowed.
+   */
+  private String deletionRejected(
+      Project.NameKey project, String ref, ObjectId old, int submitter) {
+    try {
+      ProjectState state = projectCache.get(project).orElse(null);
+      if (state == null) {
+        return "project not found";
+      }
+      refValidatorsFactory
+          .create(
+              state.getProject(),
+              userFactory.create(Account.id(submitter)),
+              new ReceiveCommand(old, ObjectId.zeroId(), ref, ReceiveCommand.Type.DELETE),
+              ImmutableListMultimap.of())
+          .validateForRefOperation();
+      return null;
+    } catch (RefOperationValidationException e) {
+      StringBuilder msg = new StringBuilder(String.valueOf(e.getMessage()));
+      e.getMessages().forEach(v -> msg.append("; ").append(v.getMessage()));
+      return msg.toString();
+    }
   }
 
   private boolean mayDelete(Project.NameKey project, String ref, int submitter) {

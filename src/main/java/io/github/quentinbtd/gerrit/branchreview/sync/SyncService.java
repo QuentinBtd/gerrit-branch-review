@@ -315,10 +315,11 @@ public class SyncService {
           lc.lastActor = user.getAccountId().get();
           store.saveLifecycle(repo, project, lc, stateId, "source deleted");
           return SyncResult.of(
-                  SyncResult.Kind.SOURCE_DELETED,
-                  sourceRef,
-                  "Change " + lc.changeNumber + " is kept; it no longer tracks a live branch")
-              .withChange(lc.changeNumber, lc.lastSyntheticPatchSet, false, null);
+              SyncResult.Kind.SOURCE_DELETED,
+              sourceRef,
+              visibleChange(project, lc.changeNumber, user)
+                  .map(n -> "Change " + n + " is kept; it no longer tracks a live branch")
+                  .orElse("its review Change is kept; it no longer tracks a live branch"));
         }
         return SyncResult.ignored(sourceRef);
       }
@@ -334,7 +335,16 @@ public class SyncService {
           return SyncResult.of(
               SyncResult.Kind.NOT_SYNCHRONIZED,
               sourceRef,
-              lc.lastError + "; automatic synchronization stopped, use the repair procedure");
+              "the review Change of this branch is missing or inconsistent; automatic"
+                  + " synchronization stopped, use the repair procedure");
+        }
+        if (!notes.getChange().isMerged()
+            && !permissionBackend.user(user).change(notes).test(ChangePermission.READ)) {
+          // Nothing about a Change the user cannot see may be revealed (number, URL, target).
+          return SyncResult.of(
+              SyncResult.Kind.NOT_SYNCHRONIZED,
+              sourceRef,
+              "the review Change of this branch is not visible to you; it was not updated");
         }
         switch (notes.getChange().getStatus()) {
           case MERGED -> {
@@ -448,7 +458,9 @@ public class SyncService {
         return SyncResult.of(
             SyncResult.Kind.NOT_SYNCHRONIZED,
             sourceRef,
-            "this branch was already submitted as Change " + prevChange + ".",
+            "this branch was already submitted"
+                + visibleChange(project, prevChange, user).map(n -> " as Change " + n).orElse("")
+                + ".",
             "To continue on the same branch name, start it from the current target, e.g.:",
             "  git fetch origin && git switch -C <branch> origin/"
                 + target.substring("refs/heads/".length())
@@ -1393,6 +1405,24 @@ public class SyncService {
       SyncResult.Kind kind, Project.NameKey project, Lifecycle lc, boolean wip, int ps) {
     return SyncResult.of(kind, lc.sourceRef)
         .withChange(lc.changeNumber, ps, wip, changeUrl(project, lc.changeNumber));
+  }
+
+  /** {@code number} if the user can see that Change, empty otherwise. */
+  private Optional<Integer> visibleChange(
+      Project.NameKey project, int number, IdentifiedUser user) {
+    if (number <= 0) {
+      return Optional.empty();
+    }
+    return loadNotes(project, number)
+        .filter(
+            n -> {
+              try {
+                return permissionBackend.user(user).change(n).test(ChangePermission.READ);
+              } catch (PermissionBackendException e) {
+                return false;
+              }
+            })
+        .map(n -> number);
   }
 
   private Optional<ChangeNotes> loadNotes(Project.NameKey project, int number) {

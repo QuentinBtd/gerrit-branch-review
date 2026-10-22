@@ -6,6 +6,7 @@ package io.github.quentinbtd.gerrit.branchreview.recovery;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -14,6 +15,7 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.github.quentinbtd.gerrit.branchreview.Metrics;
+import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
 import io.github.quentinbtd.gerrit.branchreview.config.ProjectConfigLoader;
 import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
 import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
@@ -28,12 +30,17 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 
 /**
  * Periodically retries work that was accepted but not completed: unresolved reservations, failed
@@ -127,10 +134,13 @@ public class RecoveryService implements LifecycleListener {
     int backlog = 0;
     List<Work> work = new ArrayList<>();
     for (Project.NameKey project : projectCache.all()) {
-      if (!configLoader.load(project).isEnabled()) {
+      BranchReviewConfig cfg = configLoader.load(project);
+      if (!cfg.isEnabled()) {
         continue;
       }
-      try (Repository repo = repoManager.openRepository(project)) {
+      try (Repository repo = repoManager.openRepository(project);
+          ObjectInserter ins = repo.newObjectInserter();
+          RevWalk rw = new RevWalk(ins.newReader())) {
         for (Lifecycle lc : store.listLifecycles(repo)) {
           String key = project.get() + '\0' + lc.sourceRef;
           int change = lc.changeNumber;
@@ -147,10 +157,34 @@ public class RecoveryService implements LifecycleListener {
           if (!lc.isActive()) {
             continue;
           }
-          if (change > 0 && lc.pending == null && isMerged(project, change)) {
+          Optional<ChangeNotes> notes =
+              change > 0 && lc.pending == null ? loadNotes(project, change) : Optional.empty();
+          Optional<Account.Id> editor =
+              notes.isPresent() && cfg.syncEditsToBranch()
+                  ? unappliedEdit(repo, ins, rw, lc, notes.get())
+                  : Optional.empty();
+          if (notes.isPresent() && notes.get().getChange().isMerged()) {
             // A merge event was missed (queue full, restart during submit): reconcile.
             backlog++;
             work.add(new Work(key, () -> mergeWork(project, change)));
+          } else if (editor.isPresent()) {
+            // An edit event was dropped: carry the edit over as its uploader.
+            backlog++;
+            String ref = lc.sourceRef;
+            Account.Id uploader = editor.get();
+            work.add(
+                new Work(
+                    key,
+                    () ->
+                        executor
+                            .submit(
+                                project,
+                                ref,
+                                uploader,
+                                SyncService.Trigger.EDIT,
+                                SyncService.Options.NONE,
+                                SyncExecutor.Priority.BACKGROUND)
+                            .isPresent()));
           } else if (needsSync(lc)) {
             backlog++;
             if (lc.attempts < settings.maxAttempts()
@@ -219,12 +253,40 @@ public class RecoveryService implements LifecycleListener {
         SyncExecutor.Priority.BACKGROUND);
   }
 
-  private boolean isMerged(Project.NameKey project, int change) {
+  private Optional<ChangeNotes> loadNotes(Project.NameKey project, int change) {
     try {
-      return notesFactory.createChecked(project, Change.id(change)).getChange().isMerged();
+      return Optional.of(notesFactory.createChecked(project, Change.id(change)));
     } catch (RuntimeException e) {
-      return false;
+      return Optional.empty();
     }
+  }
+
+  /**
+   * The uploader of a published content edit that the lifecycle has not taken over yet: the current
+   * patch set is neither the plugin's last patch set nor a message edit / rebase of it, while the
+   * lifecycle still says SYNCED (a paused lifecycle is left alone).
+   */
+  private static Optional<Account.Id> unappliedEdit(
+      Repository repo, ObjectInserter ins, RevWalk rw, Lifecycle lc, ChangeNotes notes) {
+    if (lc.syncState != Lifecycle.SyncState.SYNCED
+        || lc.lastSyntheticCommit == null
+        || !notes.getChange().isNew()) {
+      return Optional.empty();
+    }
+    PatchSet current = notes.getCurrentPatchSet();
+    if (current.commitId().name().equals(lc.lastSyntheticCommit)) {
+      return Optional.empty();
+    }
+    try {
+      RevCommit published = rw.parseCommit(current.commitId());
+      RevCommit synthetic = rw.parseCommit(ObjectId.fromString(lc.lastSyntheticCommit));
+      if (SyncService.isDerivative(repo, ins, rw, published, synthetic)) {
+        return Optional.empty();
+      }
+    } catch (IOException e) {
+      return Optional.empty();
+    }
+    return Optional.of(current.uploader());
   }
 
   private static boolean needsSync(Lifecycle lc) {

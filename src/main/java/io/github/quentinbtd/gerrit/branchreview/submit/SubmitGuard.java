@@ -31,8 +31,10 @@ import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import io.github.quentinbtd.gerrit.branchreview.validation.ConfigValidator;
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.Ref;
@@ -161,9 +163,12 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
 
   /**
    * Whole-batch check run just before Submit updates the target refs. The per-change check above
-   * cannot see other Changes submitted together (e.g. a topic): under {@code MERGE_IF_NECESSARY}
-   * the second of two reviews based on the same tip is merged with a merge commit. Reject any new
-   * merge commit that brings in a branch-review commit through a non-first parent.
+   * cannot see other Changes submitted together (e.g. a topic). For every target ref update it
+   * collects the newly introduced commits that are current patch sets of branch reviews being
+   * submitted now (active lifecycle targeting that ref; patch sets of earlier, merged lifecycles
+   * are ordinary history). Each of them must lie on the first-parent chain of the update: a review
+   * reached only through a merge's second parent, directly or behind other commits, would be
+   * integrated with an extra merge commit.
    */
   @Override
   public void preBranchUpdate(OnSubmitValidationListener.Arguments args)
@@ -178,23 +183,41 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
             || cmd.getNewId().equals(ObjectId.zeroId())) {
           continue;
         }
+        ObjectId old = cmd.getOldId().equals(ObjectId.zeroId()) ? null : cmd.getOldId();
+        Set<ObjectId> introduced = new HashSet<>();
         rw.reset();
         rw.markStart(rw.parseCommit(cmd.getNewId()));
-        if (!cmd.getOldId().equals(ObjectId.zeroId())) {
-          rw.markUninteresting(rw.parseCommit(cmd.getOldId()));
+        if (old != null) {
+          rw.markUninteresting(rw.parseCommit(old));
         }
         for (RevCommit c : rw) {
-          for (int i = 1; i < c.getParentCount(); i++) {
-            Optional<Integer> change = branchReviewChange(repo, c.getParent(i));
-            if (change.isPresent()) {
-              throw new ValidationException(
-                  "branch-review: Change "
-                      + change.get()
-                      + " would be merged into "
-                      + cmd.getRefName()
-                      + " with a merge commit. Submit it on its own (or rebase it), so that it"
-                      + " adds exactly one commit.");
-            }
+          introduced.add(c.copy());
+        }
+        if (introduced.size() < 2) {
+          continue; // A single new commit cannot hide a merge.
+        }
+        Set<ObjectId> firstParentChain = new HashSet<>();
+        RevCommit c = rw.parseCommit(cmd.getNewId());
+        while (introduced.contains(c)) {
+          firstParentChain.add(c.copy());
+          if (c.getParentCount() == 0) {
+            break;
+          }
+          c = rw.parseCommit(c.getParent(0));
+        }
+        for (ObjectId id : introduced) {
+          if (firstParentChain.contains(id)) {
+            continue;
+          }
+          Optional<Integer> change = submittedReview(repo, id, cmd.getRefName());
+          if (change.isPresent()) {
+            throw new ValidationException(
+                "branch-review: Change "
+                    + change.get()
+                    + " would be merged into "
+                    + cmd.getRefName()
+                    + " through a merge commit. Submit it on its own (or rebase it), so that it"
+                    + " adds exactly one commit.");
           }
         }
       }
@@ -203,12 +226,26 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
     }
   }
 
-  /** The number of the branch-review Change whose patch set is {@code commit}, if any. */
-  private Optional<Integer> branchReviewChange(Repository repo, ObjectId commit)
+  /**
+   * The number of the branch review being submitted now to {@code target} whose current patch set
+   * is {@code commit}, if any.
+   */
+  private Optional<Integer> submittedReview(Repository repo, ObjectId commit, String target)
       throws IOException {
     for (Ref r : repo.getRefDatabase().getTipsWithSha1(commit)) {
       PatchSet.Id ps = PatchSet.Id.fromRef(r.getName());
-      if (ps != null && store.loadLink(repo, ps.changeId().get()).exists()) {
+      if (ps == null) {
+        continue;
+      }
+      StateStore.Loaded<ChangeLink> link = store.loadLink(repo, ps.changeId().get());
+      if (!link.exists()) {
+        continue;
+      }
+      Lifecycle lc = store.loadLifecycle(repo, link.value().sourceRef).value();
+      if (lc != null
+          && lc.isActive()
+          && link.value().lifecycleId.equals(lc.id)
+          && target.equals(lc.targetRef)) {
         return Optional.of(ps.changeId().get());
       }
     }

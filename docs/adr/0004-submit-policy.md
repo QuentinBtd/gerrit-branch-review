@@ -27,8 +27,11 @@ every Submit attempt and, for Changes linked to a lifecycle of an enabled projec
 
 Because the per-change listener cannot see other Changes submitted together (whole-topic
 Submit), an `OnSubmitValidationListener` additionally inspects every target ref update of the
-Submit just before it is applied and rejects any new merge commit that brings in a branch-review
-patch set through a non-first parent. Under `MERGE_IF_NECESSARY` two reviews based on the same
+Submit just before it is applied. Among the newly introduced commits it finds the current patch
+sets of reviews being submitted now (active lifecycle targeting that ref) and requires each of
+them to be on the first-parent chain of the update; a review reached only through a merge, even
+behind other commits, is rejected. Patch sets of earlier, merged lifecycles are ordinary history,
+so maintenance merges (e.g. master into stable) are unaffected. Under `MERGE_IF_NECESSARY` two reviews based on the same
 tip must therefore be submitted separately (or rebased); rebase and cherry-pick types add one
 commit per review.
 

@@ -167,7 +167,9 @@ See [ADR 0004](adr/0004-submit-policy.md) for the submit guard. After Gerrit rep
 1. the project still enables the plugin and the option;
 2. the ref is still an eligible source of this lifecycle (never the target or protected refs);
 3. it still points at exactly the submitted source commit;
-4. the submitting user holds `delete` (or force push) on it.
+4. the submitting user holds `delete` (or force push) on it;
+5. Gerrit's ref operation validators (e.g. branch-protection plugins) accept the deletion by that
+   user.
 
 Deletion is a compare-and-swap on that commit as the server, recorded with the submitter's
 account in the ref-updated event. Repeated merge events are idempotent; failures never affect
@@ -202,7 +204,9 @@ taken from Gerrit's stored submit record so that cleanup keeps working. Failed s
 are retried as the last pushing user, and pending cleanups are retried. Healthy lifecycles are
 checked in the pass itself and cost no queue capacity. Work is admitted as background work
 (at most half of `maxQueued`) in a stable order that resumes after the last admitted item, so
-every lifecycle is eventually reached even when capacity is short.
+every lifecycle is eventually reached even when capacity is short. A published content edit that
+was never carried over (its event was dropped) is detected the same way and retried as its
+uploader.
 
 ## Plugin reload and restart
 

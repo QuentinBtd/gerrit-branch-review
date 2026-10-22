@@ -106,7 +106,7 @@ public class BranchStatus {
         info.syncState = lc.syncState.name();
         info.targetRef = lc.targetRef;
         info.lastSourceId = lc.lastSourceId;
-        info.lastError = lc.lastError;
+
         info.attempts = lc.attempts;
         info.pending = lc.pending != null;
         if (lc.merge != null) {
@@ -117,10 +117,12 @@ public class BranchStatus {
             lc.syncState == Lifecycle.SyncState.SYNCED
                 && info.currentSourceId != null
                 && info.currentSourceId.equals(lc.lastSourceId);
+        boolean changeVisible = lc.changeNumber == 0;
         if (lc.changeNumber > 0) {
           try {
             ChangeNotes notes = notesFactory.createChecked(project, Change.id(lc.changeNumber));
             if (permissionBackend.user(user).change(notes).test(ChangePermission.READ)) {
+              changeVisible = true;
               info.changeNumber = lc.changeNumber;
               info.changeStatus = notes.getChange().getStatus().name();
               info.workInProgress = notes.getChange().isWorkInProgress();
@@ -137,6 +139,10 @@ public class BranchStatus {
           } catch (NoSuchChangeException e) {
             problems.add("mapped Change does not exist");
           }
+        }
+        // Stored errors can name the Change and its destination: only for those who can see it.
+        if (changeVisible) {
+          info.lastError = lc.lastError;
         }
         if (lc.isActive() && cfg.isEnabled() && !cfg.targetBranch().equals(lc.targetRef)) {
           problems.add("configured targetBranch differs from the lifecycle target " + lc.targetRef);

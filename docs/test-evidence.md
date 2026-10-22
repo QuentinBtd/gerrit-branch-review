@@ -25,7 +25,7 @@ on GitHub is not evidence; all results below are local runs.
 | Hooks on all files | `mise run hooks:run` | passed (after fixing a buildifier pathspec bug and a missing executable bit it found) |
 | Local CI equivalent | `mise run verify` (format, hooks, lint, unit tests, build of 3 series) | passed |
 | Unit tests | `mise run test` (also per series in the matrix) | passed: 31 cases × 3 series |
-| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 87 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 20, `SubmitIT` 22, `PermissionsIT` 10, `LifecycleIT` 13, `RecoveryIT` 8) |
+| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 92 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 20, `SubmitIT` 25, `PermissionsIT` 11, `LifecycleIT` 13, `RecoveryIT` 9) |
 | Black-box tests | `bash tools/scripts/test.sh blackbox <series>` | passed: 9 cases × 3 series |
 | Full matrix | `mise run test:matrix` | passed (exit 0) for 3.12.11, 3.13.10, 3.14.4; re-run on 2026-10-22 after adding `syncEditsToBranch` (main checkout, branch `feat/initial-branch-review`) |
 | Packaging | `mise run package` | passed: JAR manifest/content checks for all series |
