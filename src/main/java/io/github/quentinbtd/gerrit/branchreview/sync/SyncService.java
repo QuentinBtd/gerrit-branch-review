@@ -660,6 +660,11 @@ public class SyncService {
         if (cfg.syncEditsToBranch()) {
           lines.add(
               "then commit and push; synchronization resumes once the branch contains the edits.");
+          lines.add(
+              "Or keep the branch as it is (the edits stay visible in patch set "
+                  + current.number()
+                  + "): "
+                  + hints.sync(project, sourceRef, "--accept-divergence"));
         } else {
           lines.add(
               "then commit, push, and run: "

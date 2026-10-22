@@ -144,7 +144,9 @@ When the edit cannot be transferred to a branch that was not force-pushed (confl
 permission, a merge commit, an edit combined with a rebase that cannot be separated) the
 lifecycle pauses in `DIVERGED`. The next push prints the reason and the commands to apply the
 edit by hand (`git fetch` of both patch sets, `git diff … | git apply --3way`); synchronization
-resumes automatically as soon as a pushed branch contains the edit. With
+resumes automatically as soon as a pushed branch contains the edit; alternatively
+`branch-review sync --accept-divergence` keeps the branch as it is (the edit stays visible in its
+patch set). Note that `git push -f` that turns out to be a fast-forward is not a force push. With
 `syncEditsToBranch = false` the plugin never writes the branch and resumes only after
 `branch-review sync --accept-divergence`. Repair commands in messages show this server's real SSH
 address (`sshd.advertisedAddress`, else `sshd.listenAddress` with the canonical web host), or the

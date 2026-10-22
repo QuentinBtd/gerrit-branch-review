@@ -264,8 +264,19 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     assertOk(r, FEATURE);
     assertThat(joined(r)).contains("the edits could not be applied to the branch");
     assertThat(joined(r)).contains("conflict with the branch in a/file1.txt");
+    assertThat(joined(r)).contains("Or keep the branch as it is");
     assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.DIVERGED);
     assertThat(change(number).revisions).hasSize(2);
+
+    // Keeping the branch: the pushed content wins, the edit stays in patch set 2.
+    PostSync.Input in = new PostSync.Input();
+    in.acceptDivergence = true;
+    syncViaRest(user, FEATURE, in);
+    ChangeInfo c = change(number);
+    assertThat(c.revisions).hasSize(3);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(c.currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("edited locally\n");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
   }
 
   private org.eclipse.jgit.revwalk.RevCommit amendTipWith(String path, String content)
