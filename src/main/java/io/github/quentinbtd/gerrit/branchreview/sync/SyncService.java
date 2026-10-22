@@ -605,6 +605,19 @@ public class SyncService {
                   rw.parseCommit(lastSynthetic),
                   sourceId)
               : EditBackport.refused(null);
+      if (!backport.accepted() && historyRewritten(rw, lc, sourceId)) {
+        // The branch was force-pushed since the last synchronization: Gerrit already checked the
+        // pusher's force permission, so the pushed content is authoritative over edits it does
+        // not contain. They stay visible in the published patch set.
+        extra.add(
+            "the branch history was rewritten (force push) and does not contain the edits of"
+                + " patch set "
+                + current.number()
+                + (backport.reason() == null ? "" : " (" + backport.reason() + ")")
+                + "; the pushed content replaces them, they remain visible in patch set "
+                + current.number());
+        backport = EditBackport.alreadyInBranch();
+      }
       if (backport.accepted()) {
         lc.lastSyntheticCommit = current.commitId().name();
         lc.lastSyntheticPatchSet = current.number();
@@ -995,6 +1008,20 @@ public class SyncService {
 
     static EditBackport refused(String reason) {
       return new EditBackport(false, null, null, reason);
+    }
+  }
+
+  /** Whether the source no longer descends from the last synchronized source state. */
+  private static boolean historyRewritten(RevWalk rw, Lifecycle lc, ObjectId sourceId)
+      throws IOException {
+    if (lc.lastSourceId == null) {
+      return false;
+    }
+    try {
+      return !rw.isMergedInto(
+          rw.parseCommit(ObjectId.fromString(lc.lastSourceId)), rw.parseCommit(sourceId));
+    } catch (MissingObjectException e) {
+      return true;
     }
   }
 

@@ -25,7 +25,7 @@ on GitHub is not evidence; all results below are local runs.
 | Hooks on all files | `mise run hooks:run` | passed (after fixing a buildifier pathspec bug and a missing executable bit it found) |
 | Local CI equivalent | `mise run verify` (format, hooks, lint, unit tests, build of 3 series) | passed |
 | Unit tests | `mise run test` (also per series in the matrix) | passed: 24 cases × 3 series |
-| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 72 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 15, `SubmitIT` 17, `PermissionsIT` 10, `LifecycleIT` 10, `RecoveryIT` 6) |
+| Acceptance tests | `bash tools/scripts/test.sh acceptance <series>` | passed: 75 cases × 3 series (`CoreWorkflowIT` 14, `StateAndTextIT` 18, `SubmitIT` 17, `PermissionsIT` 10, `LifecycleIT` 10, `RecoveryIT` 6) |
 | Black-box tests | `bash tools/scripts/test.sh blackbox <series>` | passed: 9 cases × 3 series |
 | Full matrix | `mise run test:matrix` | passed (exit 0) for 3.12.11, 3.13.10, 3.14.4; re-run on 2026-10-22 after adding `syncEditsToBranch` (main checkout, branch `feat/initial-branch-review`) |
 | Packaging | `mise run package` | passed: JAR manifest/content checks for all series |
@@ -56,7 +56,7 @@ of the snapshot (`TEST-*.xml`, `blackbox/TEST-blackbox-<series>.xml`, `blackbox/
 | No-op / retry | `CoreWorkflowIT.identicalRetryAndEquivalentContentAddNoPatchSet`, `RecoveryIT.sourceAdvancingDuringProcessingIsPickedUp`, black-box `test_up_to_date_push_and_status_lookup` | |
 | WIP / Ready | `StateAndTextIT.readyStaysReadyAndWipStaysWip` | A deterministic race between a WIP toggle and a running sync was not constructed; synchronization never writes WIP state (`PatchSetInserter` without `setWorkInProgress`) |
 | Text | `TextTest`, `StateAndTextIT` (subject/body independently, trailers, UI message edit, reset) | |
-| Human divergence | `StateAndTextIT.uiEditIsAppliedToTheBranch`, `editIsAppliedOnTopOfAConcurrentPush`, `editAlreadyInTheBranchIsRecognized`, `conflictingEditPausesWithExplanation`, `editorWithoutBranchPushRightKeepsThePause`, `humanContentPatchSetPausesSynchronizationWhenBackportDisabled`, `unpublishedChangeEditIsNotTouched`, `guiRebaseIsRecognizedAsDerivative`; black-box `test_ui_edit_reaches_branch` | |
+| Human divergence | `StateAndTextIT.uiEditIsAppliedToTheBranch`, `editIsAppliedOnTopOfAConcurrentPush`, `editAlreadyInTheBranchIsRecognized`, `conflictingEditPausesWithExplanation`, `editorWithoutBranchPushRightKeepsThePause`, `forcePushReplacesConflictingEdit`, `forcePushKeepsNonConflictingEdit`, `forcePushOverridesWhenBackportDisabled`, `humanContentPatchSetPausesSynchronizationWhenBackportDisabled`, `unpublishedChangeEditIsNotTouched`, `guiRebaseIsRecognizedAsDerivative`; black-box `test_ui_edit_reaches_branch` | |
 | Git graph | `SquashPlannerTest`, `LifecycleIT.forcePushRebaseAndTargetMergedIntoSource`, `unrelatedHistoryIsRejected`, `conflictIsReportedAndBlocksSubmit`, `SubmitIT.targetAdvancedBeforeSquashIsPreserved` | |
 | Tree content | `SquashPlannerTest` (rename/delete, binary, modes, symlink, gitlink, empty, conflict) | |
 | Identity | `PermissionsIT.anotherAuthorizedPusherUploadsWithoutTakingOwnership`, `CoreWorkflowIT.sourceChangeIdCannotHijackAnotherChange` | |

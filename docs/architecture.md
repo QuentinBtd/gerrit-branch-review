@@ -130,10 +130,17 @@ contain it, so applying the branch again would erase it. With `syncEditsToBranch
 
 Developers see an ordinary non-fast-forward rejection if they push from the old tip and simply
 `git pull` first; a push that triggered the transfer says so ("run git pull before pushing
-again"). A deliberate `git push --force` replaces the branch and therefore removes the edit
-from the next patch set, like any force push.
+again").
 
-When the edit cannot be transferred (conflict with the branch, uploader without push
+A force push (the branch no longer descends from the last synchronized state; Gerrit has
+already checked the pusher's force permission) is treated as authoritative: the edit is still
+re-applied on top of the forced branch when it merges cleanly, but if it conflicts with the
+forced content — or `syncEditsToBranch` is `false` — the pushed content wins, a new patch set is
+created, and the push output says that the edit remains visible in the earlier patch set. A
+lifecycle that is already paused resumes the same way on the next push or `branch-review sync`
+once the branch has been force-pushed.
+
+When the edit cannot be transferred to a branch that was not force-pushed (conflict with the branch, uploader without push
 permission, a merge commit, an edit combined with a rebase that cannot be separated) the
 lifecycle pauses in `DIVERGED`. The next push prints the reason and the commands to apply the
 edit by hand (`git fetch` of both patch sets, `git diff … | git apply --3way`); synchronization

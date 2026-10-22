@@ -268,6 +268,65 @@ public class StateAndTextIT extends AbstractBranchReviewIT {
     assertThat(change(number).revisions).hasSize(2);
   }
 
+  private org.eclipse.jgit.revwalk.RevCommit amendTipWith(String path, String content)
+      throws Exception {
+    var tip = repo.getRevWalk().parseCommit(repo.getRepository().resolve("HEAD"));
+    var amended =
+        repo.amend(tip)
+            .author(user.newIdent())
+            .committer(user.newIdent())
+            .add(path, content)
+            .create();
+    repo.reset(amended);
+    return amended;
+  }
+
+  @Test
+  public void forcePushReplacesConflictingEdit() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    enable();
+    var forced = amendTipWith("a/file1.txt", "rewritten locally\n");
+    PushResult r = push(repo, "HEAD:" + FEATURE, true);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("history was rewritten (force push)");
+    assertThat(joined(r)).contains("they remain visible in patch set 2");
+    assertThat(joined(r)).contains("updated Change " + number + " with patch set 3");
+    assertThat(refValue(FEATURE)).isEqualTo(forced);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(change(number).currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("rewritten locally\n");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
+  @Test
+  public void forcePushKeepsNonConflictingEdit() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    enable();
+    var forced = amendTipWith("x/new.txt", "new\n");
+    PushResult r = push(repo, "HEAD:" + FEATURE, true);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("applied the edits of patch set 2");
+    assertThat(sourceTip().getParent(0)).isEqualTo(forced);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(change(number).currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("edited in UI\n");
+    assertThat(fileAt(rev, "x/new.txt")).isEqualTo("new\n");
+  }
+
+  @Test
+  public void forcePushOverridesWhenBackportDisabled() throws Exception {
+    setConfig(NO_BACKPORT);
+    editInGerrit("a/file1.txt", "edited in UI\n");
+    var forced = amendTipWith("x/new.txt", "new\n");
+    PushResult r = push(repo, "HEAD:" + FEATURE, true);
+    assertOk(r, FEATURE);
+    assertThat(joined(r)).contains("history was rewritten (force push)");
+    assertThat(refValue(FEATURE)).isEqualTo(forced);
+    var rev = org.eclipse.jgit.lib.ObjectId.fromString(change(number).currentRevision);
+    assertThat(fileAt(rev, "a/file1.txt")).isEqualTo("a content 1\n");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
+  }
+
   @Test
   public void editorWithoutBranchPushRightKeepsThePause() throws Exception {
     projectOperations
