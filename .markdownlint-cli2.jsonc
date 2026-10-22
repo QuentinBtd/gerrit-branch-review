@@ -7,5 +7,14 @@
     "MD033": false, // inline HTML (e.g. <details>) is allowed
     "MD041": false  // CHANGELOG and generated files may not start with a heading
   },
+  // Release Please emits blank lines between generated changelog sections.
+  // Keep every other rule, and keep MD012 enabled for handwritten documentation.
+  "overrides": [
+    {
+      "filter": ["CHANGELOG.md"],
+      "combine": "merge",
+      "config": { "MD012": false }
+    }
+  ],
   "ignores": ["bazel-*/**", "build/**", "dist/**", "node_modules/**"]
 }
