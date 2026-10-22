@@ -128,6 +128,7 @@ curl -u user:pw -X POST -H 'Content-Type: application/json' \
   -d '{"ref":"refs/heads/feature/x"}' 'https://host/a/projects/<project>/branch-review~sync'
 ```
 
-`status` requires READ on the branch (otherwise "not found") and includes Change details only
+`sync` waits up to `pushWaitSeconds` for the result and otherwise reports that the work is still
+running; it is refused while the plugin is stopping or the queue is full. `status` requires READ on the branch (otherwise "not found") and includes Change details only
 if the caller can see the Change. `sync` requires push permission on the branch and then the
 normal Change creation/patch set permissions; it is idempotent.

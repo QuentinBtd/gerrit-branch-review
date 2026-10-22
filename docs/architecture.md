@@ -213,7 +213,8 @@ uploader.
 The JAR declares `Gerrit-ReloadMode: restart`: on `gerrit plugin reload` the old instance is
 stopped first and only then is the new instance started. Stopping lets queued work run for
 `stopGraceSeconds` (30 s), then interrupts running work, and **returns only when every worker
-has finished**. Two instances therefore never run concurrently with separate in-process locks,
+has finished**. All synchronizations run on that executor, including manual `branch-review sync`
+requests (the request thread only waits for the result), so none can outlive the stop. Two instances therefore never run concurrently with separate in-process locks,
 so a replacement can never mistake an in-flight reservation for an abandoned one. A worker stuck
 in non-interruptible work (e.g. a slow validator) delays the reload or shutdown instead; this is
 logged every 30 s. Pushes that land in the short window while

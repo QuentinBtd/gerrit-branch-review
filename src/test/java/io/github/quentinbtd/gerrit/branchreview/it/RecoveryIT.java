@@ -357,6 +357,61 @@ public class RecoveryIT extends AbstractBranchReviewIT {
   }
 
   @Test
+  public void stopWaitsForAnInFlightManualSyncRequest() throws Exception {
+    enable();
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    commits(repo, "a", 1);
+    setConfig(null);
+    push(repo, FEATURE);
+    enable();
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    CommitValidationListener slow =
+        new CommitValidationListener() {
+          @Override
+          public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent e) {
+            if (e.command.getRefName().startsWith("refs/changes/")) {
+              entered.countDown();
+              try {
+                release.await();
+              } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+              }
+            }
+            return List.of();
+          }
+        };
+    var executor = plugin.getSysInjector().getInstance(SyncExecutor.class);
+    var response = new java.util.concurrent.atomic.AtomicReference<String>();
+    try (Registration reg = extensionRegistry.newRegistration().add(slow)) {
+      // A real REST request on its own request thread.
+      Thread request =
+          new Thread(
+              () -> {
+                try {
+                  response.set(syncViaRest(user, FEATURE, new PostSync.Input()));
+                } catch (Exception ex) {
+                  response.set("error: " + ex);
+                }
+              });
+      request.start();
+      assertThat(entered.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      Thread stopper = new Thread(executor::stop);
+      stopper.start();
+      stopper.join(2000);
+      assertThat(stopper.isAlive()).isTrue();
+      release.countDown();
+      stopper.join(60_000);
+      assertThat(stopper.isAlive()).isFalse();
+      request.join(60_000);
+    }
+    assertThat(response.get()).contains("\"result\":\"created\"");
+    assertThat(changes()).hasSize(1);
+    // Requests after the stop are refused rather than run outside the executor.
+    assertThat(syncViaRest(user, FEATURE, new PostSync.Input())).contains("plugin stopping");
+  }
+
+  @Test
   public void concurrentSynchronizationCreatesOneChange() throws Exception {
     enable();
     TestRepository<InMemoryRepository> repo = cloneAs(user);

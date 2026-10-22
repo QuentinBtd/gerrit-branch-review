@@ -23,13 +23,20 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
 import io.github.quentinbtd.gerrit.branchreview.config.ProjectConfigLoader;
+import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
 import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
 import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
+import io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncResult;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 
@@ -48,7 +55,8 @@ public class BranchStatus {
   private final PermissionBackend permissionBackend;
   private final ChangeNotes.Factory notesFactory;
   private final DynamicItem<UrlFormatter> urlFormatter;
-  private final SyncService syncService;
+  private final SyncExecutor executor;
+  private final ServerSettings settings;
 
   @Inject
   BranchStatus(
@@ -58,14 +66,16 @@ public class BranchStatus {
       PermissionBackend permissionBackend,
       ChangeNotes.Factory notesFactory,
       DynamicItem<UrlFormatter> urlFormatter,
-      SyncService syncService) {
+      SyncExecutor executor,
+      ServerSettings settings) {
     this.repoManager = repoManager;
     this.store = store;
     this.configLoader = configLoader;
     this.permissionBackend = permissionBackend;
     this.notesFactory = notesFactory;
     this.urlFormatter = urlFormatter;
-    this.syncService = syncService;
+    this.executor = executor;
+    this.settings = settings;
   }
 
   public static String normalizeRef(String ref) throws BadRequestException {
@@ -162,6 +172,10 @@ public class BranchStatus {
   /**
    * Explicit resynchronization as the calling user. Requires push permission on the source ref;
    * Change creation and patch set permissions are then checked by the normal sync path.
+   *
+   * <p>The work runs on the plugin's executor, like every other synchronization, so that stopping
+   * the plugin waits for it; the request thread only waits for the result (up to {@code
+   * pushWaitSeconds}, after which it reports that the work is still running).
    */
   public SyncResult sync(
       Project.NameKey project, String ref, CurrentUser user, SyncService.Options opts)
@@ -175,7 +189,26 @@ public class BranchStatus {
       throw new ResourceNotFoundException(ref);
     }
     perm.check(RefPermission.UPDATE);
-    return syncService.sync(
-        project, sourceRef, user.asIdentifiedUser(), SyncService.Trigger.MANUAL, opts);
+    Optional<CompletableFuture<SyncResult>> f =
+        executor.submit(project, sourceRef, user.getAccountId(), SyncService.Trigger.MANUAL, opts);
+    if (f.isEmpty()) {
+      return SyncResult.of(
+          SyncResult.Kind.FAILED,
+          sourceRef,
+          "server busy or plugin stopping; synchronization was not started, try again later");
+    }
+    try {
+      return f.get().get(settings.pushWaitSeconds(), TimeUnit.SECONDS);
+    } catch (TimeoutException e) {
+      return SyncResult.of(
+          SyncResult.Kind.IN_PROGRESS,
+          sourceRef,
+          "synchronization is still running; check the result with branch-review status");
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return SyncResult.of(SyncResult.Kind.IN_PROGRESS, sourceRef);
+    } catch (ExecutionException e) {
+      throw new IllegalStateException("branch-review synchronization failed", e.getCause());
+    }
   }
 }

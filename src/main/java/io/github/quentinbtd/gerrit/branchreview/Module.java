@@ -15,14 +15,20 @@ import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.MergeValidationListener;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.git.validators.RefOperationValidationListener;
+import io.github.quentinbtd.gerrit.branchreview.api.BranchStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.GetStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.PostSync;
+import io.github.quentinbtd.gerrit.branchreview.config.ProjectConfigLoader;
+import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
 import io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService;
+import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
 import io.github.quentinbtd.gerrit.branchreview.submit.MergeHandler;
 import io.github.quentinbtd.gerrit.branchreview.submit.SubmitGuard;
+import io.github.quentinbtd.gerrit.branchreview.sync.CommandHints;
 import io.github.quentinbtd.gerrit.branchreview.sync.EditListener;
 import io.github.quentinbtd.gerrit.branchreview.sync.PushHook;
 import io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor;
+import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
 import io.github.quentinbtd.gerrit.branchreview.validation.ConfigValidator;
 import io.github.quentinbtd.gerrit.branchreview.validation.StateRefProtector;
 import org.eclipse.jgit.transport.PostReceiveHook;
@@ -31,6 +37,20 @@ import org.eclipse.jgit.transport.PostReceiveHook;
 public class Module extends LifecycleModule {
   @Override
   protected void configure() {
+    // Bind every stateful singleton explicitly in this (system) injector. The plugin's SSH and
+    // HTTP injectors are children that also carry copies of server bindings; a singleton left to
+    // just-in-time binding can then be instantiated a second time in a child injector, with its
+    // own locks and an executor that was never started.
+    bind(ServerSettings.class);
+    bind(Metrics.class);
+    bind(ProjectConfigLoader.class);
+    bind(StateStore.class);
+    bind(CommandHints.class);
+    bind(SyncService.class);
+    bind(SyncExecutor.class);
+    bind(MergeHandler.class);
+    bind(RecoveryService.class);
+    bind(BranchStatus.class);
     DynamicSet.bind(binder(), ReceivePackInitializer.class).to(PushHook.class);
     DynamicSet.bind(binder(), PostReceiveHook.class).to(PushHook.class);
     DynamicSet.bind(binder(), CommitValidationListener.class).to(ConfigValidator.class);
