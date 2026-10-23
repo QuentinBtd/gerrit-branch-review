@@ -16,6 +16,7 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
     excludeBranchPattern = refs/heads/feature/private/*
     deleteSourceBranchOnSubmit = false
     syncEditsToBranch = true
+    workInProgress = true
 ```
 
 | Key | Required | Default | Meaning |
@@ -26,6 +27,7 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
 | `excludeBranchPattern` | no | none | Exclusions; they win over every route |
 | `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission. Default for every route |
 | `syncEditsToBranch` | no | `true` | Content edits made in Gerrit (inline edit, upload to the Change) are committed back onto the source branch (see [architecture](architecture.md#edits-made-in-gerrit)). `false` keeps the conservative pause. Default for every route |
+| `workInProgress` | no | `true` | Whether a **new** Change starts Work in Progress; `false` creates it ready for review (reviewers and watchers are notified as for any new Change). Default for every route |
 
 An enabled file needs at least one route: the default route (`targetBranch` with
 `sourceBranchPattern`), one or more `[target]` sections, or both.
@@ -63,7 +65,7 @@ qualified, existing target branch:
 | `refs/heads/private/x`, `refs/heads/develop`, `refs/heads/runtime`, `refs/heads/master` | none |
 
 Keys of a `[target]` section: `sourceBranchPattern` (at least one), and optionally
-`deleteSourceBranchOnSubmit` and `syncEditsToBranch`.
+`deleteSourceBranchOnSubmit`, `syncEditsToBranch` and `workInProgress`.
 
 Routing rules:
 
@@ -83,8 +85,9 @@ The target of a review is fixed when its Change is created. If a configuration c
 active branch elsewhere, the lifecycle is `BLOCKED` (Submit too) until the previous routing is
 restored, or the Change is abandoned and `branch-review sync --new-lifecycle` starts a new one.
 
-Status of new Changes (WIP), WIP/Ready preservation and manual text preservation are fixed
-behaviour, not options.
+`workInProgress` only sets the state of a new Change. Afterwards the WIP/Ready state chosen in
+Gerrit is always preserved by synchronization, as is manually edited text; these are not
+options.
 
 ### Pattern grammar
 

@@ -28,6 +28,8 @@ public record BranchReviewConfig(
     ImmutableList<Route> routes,
     boolean deleteSourceBranchOnSubmit,
     boolean syncEditsToBranch,
+    /** Whether new Changes start Work in Progress (default for every route). */
+    boolean workInProgress,
     ImmutableList<String> errors) {
 
   /** Namespace that holds plugin state; never eligible and never writable by users. */
@@ -41,13 +43,14 @@ public record BranchReviewConfig(
 
   /**
    * A {@code [target "<branch>"]} section: its source patterns and optional per-route overrides of
-   * {@code deleteSourceBranchOnSubmit} and {@code syncEditsToBranch}.
+   * {@code deleteSourceBranchOnSubmit}, {@code syncEditsToBranch} and {@code workInProgress}.
    */
   public record Route(
       String target,
       ImmutableList<RefPattern> sourcePatterns,
       Optional<Boolean> deleteSourceBranchOnSubmit,
-      Optional<Boolean> syncEditsToBranch) {}
+      Optional<Boolean> syncEditsToBranch,
+      Optional<Boolean> workInProgress) {}
 
   public static BranchReviewConfig disabled() {
     return new BranchReviewConfig(
@@ -58,6 +61,7 @@ public record BranchReviewConfig(
         ImmutableList.of(),
         false,
         false,
+        true,
         ImmutableList.of());
   }
 
@@ -70,6 +74,7 @@ public record BranchReviewConfig(
         ImmutableList.of(),
         false,
         false,
+        true,
         errors);
   }
 
@@ -112,7 +117,9 @@ public record BranchReviewConfig(
       }
     }
     if (best == null && targetBranch != null) {
-      Route fallback = new Route(targetBranch, sourcePatterns, Optional.empty(), Optional.empty());
+      Route fallback =
+          new Route(
+              targetBranch, sourcePatterns, Optional.empty(), Optional.empty(), Optional.empty());
       for (RefPattern p : sourcePatterns) {
         if (p.matches(refName) && (best == null || p.compareSpecificity(best.pattern()) > 0)) {
           best = new Match(fallback, p);
@@ -151,6 +158,14 @@ public record BranchReviewConfig(
   /** {@code syncEditsToBranch} for {@code refName}: route override, else the default. */
   public boolean syncEditsToBranch(String refName) {
     return routeOf(refName).flatMap(Route::syncEditsToBranch).orElse(syncEditsToBranch);
+  }
+
+  /**
+   * Whether a new Change for {@code refName} starts Work in Progress: route override, else the
+   * default. Only applies when the Change is created; later WIP/Ready changes are always kept.
+   */
+  public boolean workInProgress(String refName) {
+    return routeOf(refName).flatMap(Route::workInProgress).orElse(workInProgress);
   }
 
   public static boolean isOrdinaryBranch(String refName) {
