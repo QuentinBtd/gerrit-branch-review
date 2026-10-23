@@ -33,20 +33,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+      - name: Check Renovate credentials
+        env:
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: |
+          if [[ -z "$RENOVATE_TOKEN" ]]; then
+            echo "::error::Set the RENOVATE_TOKEN repository Actions secret (fine-grained PAT restricted to this repository; see docs/renovate.md)."
+            exit 1
+          fi
       - name: Run Renovate
         if: ${{ !inputs.dry-run }}
         uses: renovatebot/github-action@230ce922b08968d0a4f6f70f295601daff09ef1d # v46.3.7
         env:
           LOG_LEVEL: ${{ inputs.log-level || 'info' }}
-          RENOVATE_GIT_AUTHOR: ${{ vars.RENOVATE_GIT_AUTHOR }}
           RENOVATE_CONFIG_FILE: .github/renovate/bot-config.json5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.RENOVATE_TOKEN }}
           # Wrapper and bot are both pinned: ghcr.io/renovatebot/renovate:44.145.1-full@sha256:2ead179919ff9cf3a2486a8667b26446138d1b9329823f674543a493afc3e1e4
           renovate-image: ghcr.io/renovatebot/renovate
           renovate-version: 44.145.1-full@sha256:2ead179919ff9cf3a2486a8667b26446138d1b9329823f674543a493afc3e1e4
@@ -57,10 +59,9 @@ jobs:
         env:
           LOG_LEVEL: ${{ inputs.log-level || 'info' }}
           RENOVATE_DRY_RUN: lookup
-          RENOVATE_GIT_AUTHOR: ${{ vars.RENOVATE_GIT_AUTHOR }}
           RENOVATE_CONFIG_FILE: .github/renovate/bot-config.json5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.RENOVATE_TOKEN }}
           # Wrapper and bot are both pinned: ghcr.io/renovatebot/renovate:44.145.1-full@sha256:2ead179919ff9cf3a2486a8667b26446138d1b9329823f674543a493afc3e1e4
           renovate-image: ghcr.io/renovatebot/renovate
           renovate-version: 44.145.1-full@sha256:2ead179919ff9cf3a2486a8667b26446138d1b9329823f674543a493afc3e1e4
