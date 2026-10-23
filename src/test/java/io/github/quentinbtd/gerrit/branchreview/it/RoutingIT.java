@@ -224,7 +224,9 @@ public class RoutingIT extends AbstractBranchReviewIT {
             .getSysInjector()
             .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
     var release = new java.util.concurrent.CountDownLatch(1);
-    assertThat(
+    // Retry until a slot is free: the previous synchronization may still be finishing.
+    waitFor(
+        () ->
             executor.execute(
                 () -> {
                   try {
@@ -232,8 +234,7 @@ public class RoutingIT extends AbstractBranchReviewIT {
                   } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                   }
-                }))
-        .isTrue();
+                }));
     try {
       // Both edit events are dropped (queue full).
       editInGerrit(dev, "a/file1.txt", "lost dev edit\n");
