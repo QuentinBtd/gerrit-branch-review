@@ -146,14 +146,23 @@ public class SyncExecutor implements LifecycleListener {
     try {
       p.execute(
           () -> {
+            SyncResult result = null;
+            Throwable failure = null;
             try (ManualRequestContext ctx = requestContext.openAs(actor)) {
-              f.complete(
-                  syncService.sync(project, ref, ctx.getUser().asIdentifiedUser(), trigger, opts));
+              result =
+                  syncService.sync(project, ref, ctx.getUser().asIdentifiedUser(), trigger, opts);
             } catch (Throwable t) {
               log.atSevere().withCause(t).log("sync task failed for %s %s", project, ref);
-              f.completeExceptionally(t);
+              failure = t;
             } finally {
+              // Release the slot before publishing the result: whoever waits on it (a push, a
+              // manual sync) then finds the queue capacity already available again.
               inFlight.decrementAndGet();
+            }
+            if (failure != null) {
+              f.completeExceptionally(failure);
+            } else {
+              f.complete(result);
             }
           });
     } catch (RuntimeException e) {

@@ -8,7 +8,13 @@ change.
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_jar")
 
-_MAVEN = "https://repo1.maven.org/maven2"
+# Maven Central first, then Google's mirror of it: Bazel tries the URLs in order, so a rate-limited
+# (429) or unavailable Central does not fail the build. The pinned SHA-256 is checked whichever
+# URL serves the file.
+_MAVEN = [
+    "https://repo1.maven.org/maven2",
+    "https://maven-central.storage-download.googleapis.com/maven2",
+]
 
 def _releases_repo_impl(rctx):
     rctx.file("BUILD.bazel", "exports_files(['releases.bzl'])\n")
@@ -33,19 +39,19 @@ def _gerrit_impl(mctx):
         http_jar(
             name = "gerrit_plugin_api_" + suffix,
             sha256 = r["pluginApiSha256"],
-            urls = ["%s/com/google/gerrit/gerrit-plugin-api/%s/gerrit-plugin-api-%s.jar" % (_MAVEN, v, v)],
+            urls = ["%s/com/google/gerrit/gerrit-plugin-api/%s/gerrit-plugin-api-%s.jar" % (m, v, v) for m in _MAVEN],
         )
         http_jar(
             name = "gerrit_acceptance_framework_" + suffix,
             sha256 = r["acceptanceFrameworkSha256"],
-            urls = ["%s/com/google/gerrit/gerrit-acceptance-framework/%s/gerrit-acceptance-framework-%s.jar" % (_MAVEN, v, v)],
+            urls = ["%s/com/google/gerrit/gerrit-acceptance-framework/%s/gerrit-acceptance-framework-%s.jar" % (m, v, v) for m in _MAVEN],
         )
     for version, artifacts in data["bouncycastle"].items():
         for artifact, sha256 in artifacts.items():
             http_jar(
                 name = "bc_%s_%s" % (artifact, version.replace(".", "_")),
                 sha256 = sha256,
-                urls = ["%s/org/bouncycastle/%s-jdk18on/%s/%s-jdk18on-%s.jar" % (_MAVEN, artifact, version, artifact, version)],
+                urls = ["%s/org/bouncycastle/%s-jdk18on/%s/%s-jdk18on-%s.jar" % (m, artifact, version, artifact, version) for m in _MAVEN],
             )
     _releases_repo(
         name = "gerrit_releases",

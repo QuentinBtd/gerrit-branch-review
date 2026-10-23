@@ -271,7 +271,9 @@ public class RecoveryIT extends AbstractBranchReviewIT {
             .getSysInjector()
             .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
     var release = new java.util.concurrent.CountDownLatch(1);
-    assertThat(
+    // Retry until a slot is free: the previous synchronization may still be finishing.
+    waitFor(
+        () ->
             executor.execute(
                 () -> {
                   try {
@@ -279,8 +281,7 @@ public class RecoveryIT extends AbstractBranchReviewIT {
                   } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                   }
-                }))
-        .isTrue();
+                }));
     try {
       // The edit event cannot be queued.
       var edit = gApi.changes().id(project.get(), n).edit();
