@@ -2,10 +2,11 @@
 
 ## Project opt-in: `branch-review.config`
 
-The plugin is active for a project only when `branch-review.config` exists at the root of the
-project's own `refs/meta/config` and sets `enabled = true`. There is no inheritance: a file in
-a parent project (including All-Projects) never enables a child, and server settings can only
-restrict the plugin. Example: [`examples/branch-review.config`](../examples/branch-review.config).
+The plugin is active for a project when its **effective** configuration sets `enabled = true`.
+The effective configuration merges the `branch-review.config` files at the root of the
+`refs/meta/config` of the project and of its parents (see [Inheritance](#inheritance)), so a file
+in a parent project enables all its descendants. Server settings can only restrict the plugin.
+Example: [`examples/branch-review.config`](../examples/branch-review.config).
 
 ```ini
 [branchReview]
@@ -21,8 +22,8 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
 
 | Key | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | no | `false` | Explicit opt-in. Missing file, missing key or `false` = disabled |
-| `targetBranch` | with `sourceBranchPattern` | — | Target of the **default route**: fully qualified, existing branch (`refs/heads/master`, `refs/heads/main`, …). Fixed per lifecycle |
+| `enabled` | no | `false` | Explicit opt-in. A missing file or key inherits the parent's value (`false` if no file in the chain sets it); `false` disables |
+| `targetBranch` | with `sourceBranchPattern` | — | Target of the **default route**: fully qualified branch, expected to exist (`refs/heads/master`, `refs/heads/main`, …). Fixed per lifecycle |
 | `sourceBranchPattern` | with `targetBranch` | — | Sources of the default route; repeat the key, patterns are ORed |
 | `excludeBranchPattern` | no | none | Exclusions; they win over every route |
 | `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission. Default for every route |
@@ -89,6 +90,53 @@ restored, or the Change is abandoned and `branch-review sync --new-lifecycle` st
 Gerrit is always preserved by synchronization, as is manually edited text; these are not
 options.
 
+### Inheritance
+
+A project's effective configuration is built from the `branch-review.config` files of its
+parent chain, merged from All-Projects down to the project. Projects without a file
+contribute nothing.
+
+- A key set in a lower file **replaces** the inherited value. This includes lists: a child that
+  sets `sourceBranchPattern` replaces all of its parent's patterns.
+- An empty value (`targetBranch =`, `excludeBranchPattern =`) clears the inherited value, for
+  example to keep only `[target]` routes or to drop the inherited exclusions.
+- `enabled = true` in a parent enables every descendant; a descendant opts out with
+  `enabled = false` (and one of its own descendants can opt back in).
+- `[target "<branch>"]` sections are merged by target branch, key by key: a child can override a
+  single key of an inherited route (`workInProgress = false`) without repeating its patterns.
+  `enabled = false` in a `[target]` section removes an inherited route.
+- Each file must be valid on its own (syntax, keys, patterns). The rules that need the whole
+  picture apply to the merged result: required keys, at least one route, overlapping routes,
+  sources below a target.
+
+Example: All-Projects (or any parent) enables the plugin for its descendants:
+
+```ini
+[branchReview]
+    enabled = true
+    targetBranch = refs/heads/master
+    sourceBranchPattern = refs/heads/feature/*
+```
+
+A child project that uses `main` and opens Changes ready for review:
+
+```ini
+[branchReview]
+    targetBranch = refs/heads/main
+    workInProgress = false
+```
+
+Another child that opts out:
+
+```ini
+[branchReview]
+    enabled = false
+```
+
+Errors from a file in a parent are prefixed with that project's name
+(`in All-Projects: ...`). `GET .../branch-review~status` shows the effective configuration's
+errors.
+
 ### Pattern grammar
 
 Patterns are full ref names, matched segment by segment (`/`-separated):
@@ -109,12 +157,25 @@ tags.
 ### Validation
 
 Unknown sections, unknown keys, duplicated single-value keys, non-boolean booleans, invalid
-patterns, a missing/invalid/non-existing target, a `[target]` section without patterns, the same
-pattern routed to two targets, and source patterns below a target branch are errors. They are rejected:
+patterns, a missing or invalid target, a `[target]` section without patterns, the same
+pattern routed to two targets, and source patterns below a target branch are errors. A change
+of `branch-review.config` is checked against the effective configuration it gives the project
+(the file merged with the parents' current files, the parent being the one in the new
+`project.config`). Errors are rejected:
 
 - on direct pushes to `refs/meta/config` and uploads for review of `refs/meta/config`
   (`CommitValidationListener`, message names every problem);
 - on Submit of a `refs/meta/config` Change (`MergeValidationListener`).
+
+A target branch that does not exist in the project is only a **warning**: parent projects,
+All-Projects included, usually have no branches of their own. In a project where a route's
+target is missing, pushes routed to it are reported as not synchronized (`target branch ...
+does not exist`) until the branch is created.
+
+Changing a parent's file only checks the parent's own effective configuration; it can make a
+descendant's merged configuration invalid (for example a child route that now repeats a
+pattern of the parent). The descendant then behaves as with any invalid file (below) until one
+of the files is fixed.
 
 Patterns are validated even when `enabled = false`, so a file can be reviewed before enabling.
 If an invalid file nevertheless exists (e.g. written before the plugin was installed), the
@@ -142,8 +203,11 @@ Effects of changes:
   [architecture](architecture.md#lifecycle-states);
 - changing patterns: branches that no longer match are reported as not synchronized; nothing
   moves and no second Change is created;
-- disabling or removing the file: no synchronization, guard or cleanup; open Changes and
-  branches are kept; pending recovery and cleanup work is not executed while disabled.
+- disabling (`enabled = false`): no synchronization, guard or cleanup; open Changes and
+  branches are kept; pending recovery and cleanup work is not executed while disabled. To
+  disable a project, keep a file with `[branchReview] enabled = false`: **removing** the file
+  (or a key) does not disable anything, it restores the values inherited from the parents,
+  which may enable the plugin, or for example `deleteSourceBranchOnSubmit`, again.
 
 ## Server settings (`gerrit.config`)
 

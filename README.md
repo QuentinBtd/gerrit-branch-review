@@ -52,6 +52,10 @@ Commit `branch-review.config` at the root of the project's `refs/meta/config`
 Several targets can be routed by pattern with `[target "<branch>"]` sections (e.g. `refs/heads/dev/*`
 to `refs/heads/develop`); see [configuration](docs/configuration.md#several-target-branches-target-branch).
 
+A file in a parent project (All-Projects included) applies to all its descendants; a child
+project's file overrides the inherited keys one by one, or opts out with `enabled = false`
+(see [inheritance](docs/configuration.md#inheritance)).
+
 Developers need the usual branch permissions (`create`/`push` on the source branches) **and**
 review permissions on the target (`push` on `refs/for/refs/heads/master`). Pushing a branch never
 grants review rights.

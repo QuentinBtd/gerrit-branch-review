@@ -33,15 +33,8 @@ public class CoreWorkflowIT extends AbstractBranchReviewIT {
   }
 
   @Test
-  public void explicitlyDisabledAndParentConfigDoNotEnable() throws Exception {
+  public void explicitlyDisabled() throws Exception {
     setConfig(DEFAULT_CONFIG.replace("enabled = true", "enabled = false"));
-    // A parent project with an enabled file must not enable the child: no inheritance.
-    try (var repo = repoManager.openRepository(allProjects);
-        var tr = new org.eclipse.jgit.junit.TestRepository<>(repo)) {
-      tr.branch("refs/meta/config").commit().add("branch-review.config", DEFAULT_CONFIG).create();
-    }
-    projectCache.evictAndReindex(allProjects);
-    projectCache.evictAndReindex(project);
     TestRepository<InMemoryRepository> repo = cloneAs(user);
     commits(repo, "a", 1);
     PushResult r = push(repo, FEATURE);

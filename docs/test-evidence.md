@@ -48,7 +48,7 @@ of the snapshot (`TEST-*.xml`, `blackbox/TEST-blackbox-<series>.xml`, `blackbox/
 
 | Area | Covered by | Notes |
 | --- | --- | --- |
-| Opt-in | `CoreWorkflowIT.disabledWithoutConfigFile`, `explicitlyDisabledAndParentConfigDoNotEnable`, `invalidConfigIsReportedAndNothingIsMutated`, `ConfigParserTest` | |
+| Opt-in | `CoreWorkflowIT.disabledWithoutConfigFile`, `explicitlyDisabled`, `InheritanceIT`, `invalidConfigIsReportedAndNothingIsMutated`, `ConfigParserTest` | |
 | Ref filtering | `CoreWorkflowIT.refFiltering`, `targetPushIsIgnored`, `ConfigParserTest.hardExclusionsWinOverPatterns`, `refPatternGrammar` | |
 | Config updates | `CoreWorkflowIT.configCacheFollowsUpdates`, `LifecycleIT.targetChangeDuringActiveLifecycleIsRefused`, `patternChangeDoesNotMoveOrDuplicate`, `PermissionsIT.configAndSourceInOnePushAreNotSynchronized` | |
 | Creation | `CoreWorkflowIT.pushCreatesOneWipChangeAndUpdatesIt`, black-box `test_ssh_creation_and_http_update_report_real_url` | |

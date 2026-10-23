@@ -9,6 +9,8 @@ import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
 import io.github.quentinbtd.gerrit.branchreview.config.ConfigParser;
 import io.github.quentinbtd.gerrit.branchreview.config.RefPattern;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.Test;
 
 public class ConfigParserTest {
@@ -301,6 +303,139 @@ public class ConfigParserTest {
     assertThat(ready.workInProgress("refs/heads/stable-fix")).isTrue();
     assertInvalid(VALID + "  workInProgress = maybe\n", "workInProgress must be true or false");
     assertInvalid(VALID + "  workInProgress = true\n  workInProgress = false\n", "at most once");
+  }
+
+  private static BranchReviewConfig merge(String... rootFirst) {
+    List<ConfigParser.Layer> layers = new ArrayList<>();
+    for (int i = 0; i < rootFirst.length; i++) {
+      layers.add(ConfigParser.parseLayer(rootFirst[i], "p" + i));
+    }
+    return ConfigParser.merge(layers);
+  }
+
+  @Test
+  public void parentEnablesChildrenWithoutFiles() {
+    BranchReviewConfig c = merge(VALID, null, "");
+    assertThat(c.errors()).isEmpty();
+    assertThat(c.isEnabled()).isTrue();
+    assertThat(c.targetFor("refs/heads/feature/x")).hasValue("refs/heads/master");
+  }
+
+  @Test
+  public void childDisablesInheritedConfig() {
+    assertThat(merge(VALID, "[branchReview]\n enabled = false\n").status())
+        .isEqualTo(BranchReviewConfig.Status.DISABLED);
+    // ... and a grandchild can enable it again.
+    assertThat(
+            merge(VALID, "[branchReview]\n enabled = false\n", "[branchReview]\n enabled = true\n")
+                .isEnabled())
+        .isTrue();
+  }
+
+  @Test
+  public void childReplacesKeysAndLists() {
+    BranchReviewConfig c =
+        merge(
+            VALID,
+            """
+            [branchReview]
+              targetBranch = refs/heads/main
+              sourceBranchPattern = refs/heads/topic/*
+              deleteSourceBranchOnSubmit = true
+            """);
+    assertThat(c.errors()).isEmpty();
+    assertThat(c.targetFor("refs/heads/topic/x")).hasValue("refs/heads/main");
+    // The list is replaced, not appended to.
+    assertThat(c.isEligibleSource("refs/heads/feature/x")).isFalse();
+    assertThat(c.isEligibleSource("refs/heads/bugfix/x")).isFalse();
+    assertThat(c.deleteSourceBranchOnSubmit()).isTrue();
+    // Keys the child does not set are inherited.
+    assertThat(c.excludePatterns())
+        .containsExactly(RefPattern.parse("refs/heads/feature/private/*"));
+    assertThat(merge(VALID, "[branchReview]\n syncEditsToBranch = false\n").targetBranch())
+        .isEqualTo("refs/heads/master");
+  }
+
+  @Test
+  public void emptyValueClearsInheritedValue() {
+    BranchReviewConfig c = merge(VALID, "[branchReview]\n excludeBranchPattern =\n");
+    assertThat(c.errors()).isEmpty();
+    assertThat(c.isEligibleSource("refs/heads/feature/private/x")).isTrue();
+
+    BranchReviewConfig routedOnly =
+        merge(
+            VALID,
+            """
+            [branchReview]
+              targetBranch =
+              sourceBranchPattern =
+            [target "refs/heads/dev"]
+              sourceBranchPattern = refs/heads/dev-*
+            """);
+    assertThat(routedOnly.errors()).isEmpty();
+    assertThat(routedOnly.targetBranch()).isNull();
+    assertThat(routedOnly.targetFor("refs/heads/feature/x")).isEmpty();
+    assertThat(routedOnly.targetFor("refs/heads/dev-x")).hasValue("refs/heads/dev");
+  }
+
+  @Test
+  public void routesMergeByTargetKeyByKey() {
+    String parent =
+        """
+        [branchReview]
+          enabled = true
+        [target "refs/heads/dev"]
+          sourceBranchPattern = refs/heads/dev-*
+          deleteSourceBranchOnSubmit = true
+        [target "refs/heads/run"]
+          sourceBranchPattern = refs/heads/run-*
+        """;
+    BranchReviewConfig c =
+        merge(
+            parent,
+            """
+            [target "refs/heads/dev"]
+              workInProgress = false
+            [target "refs/heads/run"]
+              enabled = false
+            [target "refs/heads/stable"]
+              sourceBranchPattern = refs/heads/stable-*
+            """);
+    assertThat(c.errors()).isEmpty();
+    assertThat(c.targets()).containsExactly("refs/heads/dev", "refs/heads/stable");
+    assertThat(c.targetFor("refs/heads/dev-x")).hasValue("refs/heads/dev");
+    assertThat(c.deleteSourceBranchOnSubmit("refs/heads/dev-x")).isTrue();
+    assertThat(c.workInProgress("refs/heads/dev-x")).isFalse();
+    assertThat(c.targetFor("refs/heads/run-x")).isEmpty();
+    assertThat(c.targetFor("refs/heads/stable-x")).hasValue("refs/heads/stable");
+  }
+
+  @Test
+  public void effectiveRulesApplyToTheMergedConfig() {
+    // A child's route repeating a pattern of an inherited route is caught after merging.
+    BranchReviewConfig c =
+        merge(
+            "[branchReview]\n enabled = true\n[target \"refs/heads/dev\"]\n"
+                + " sourceBranchPattern = refs/heads/x-*\n",
+            "[target \"refs/heads/run\"]\n sourceBranchPattern = refs/heads/x-*\n");
+    assertThat(c.status()).isEqualTo(BranchReviewConfig.Status.INVALID);
+    assertThat(String.join("\n", c.errors())).contains("is routed to both");
+    // A route without patterns, from a child that only sets an override, is invalid.
+    assertThat(
+            String.join(
+                "\n",
+                merge(VALID, "[target \"refs/heads/dev\"]\n workInProgress = false\n").errors()))
+        .contains("needs at least one sourceBranchPattern");
+  }
+
+  @Test
+  public void fileErrorsNameTheirProject() {
+    BranchReviewConfig c = merge(VALID, "[branchReview]\n bogus = 1\n");
+    assertThat(c.status()).isEqualTo(BranchReviewConfig.Status.INVALID);
+    assertThat(String.join("\n", c.errors())).contains("in p1: ");
+    // A single file is not attributed, whatever the number of ancestors without one.
+    assertThat(String.join("\n", merge(null, "", "[branchReview]\n bogus = 1\n").errors()))
+        .doesNotContain("in p2");
   }
 
   private static void assertInvalid(String text, String fragment) {
