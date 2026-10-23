@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.2.1...v0.3.0) (2026-10-23)
+
+
+### Features
+
+* **config:** option to create Changes ready for review ([af87504](https://github.com/QuentinBtd/gerrit-branch-review/commit/af875049f5d73a2a286506ce5c82991ccac317e3))
+* **config:** option to create Changes ready for review ([b2bde49](https://github.com/QuentinBtd/gerrit-branch-review/commit/b2bde491c2082777de17cd525b15b136513c8c07))
+
 ## [0.2.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.2.0...v0.2.1) (2026-10-23)
 
 
