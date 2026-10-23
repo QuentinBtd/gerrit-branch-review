@@ -14,8 +14,8 @@ recorded in [docs/adr](adr/).
 | `SyncService` | internal `BatchUpdate`, `ChangeInserter`, `PatchSetInserter` | Lifecycle state machine, squash planning, reservation, insertion, completion |
 | `SquashPlanner` | JGit | Net contribution of a branch as a single tree on top of the target |
 | `StateStore` | plain refs | Durable lifecycle and Change link records (compare-and-swap) |
-| `ProjectConfigLoader`, `ConfigParser` | project state | Strict `branch-review.config` parsing, cached per config revision |
-| `ConfigValidator`, `StateRefProtector` | `CommitValidationListener`, `RefOperationValidationListener` | Rejects invalid config and user writes to plugin state |
+| `ProjectConfigLoader`, `ConfigParser` | project state | Strict `branch-review.config` parsing; merges the files of the parent chain; cached per config revision |
+| `ConfigValidator`, `StateRefProtector` | `CommitValidationListener`, `RefOperationValidationListener` | Rejects config changes that make the effective config invalid, and user writes to plugin state |
 | `SubmitGuard` | `MergeValidationListener` | Submit type and staleness policy at Submit time |
 | `MergeHandler` | `ChangeMergedListener` | Closes lifecycles, optional guarded source deletion |
 | `RecoveryService` | `LifecycleListener` | Retries accepted-but-unsynchronized work and pending cleanups |
@@ -178,8 +178,11 @@ can therefore never exceed what the submitter could have done by hand.
 
 ## Configuration caching
 
-Parsed configuration is cached by (project, `refs/meta/config` revision). Gerrit evicts the
-project state on every `refs/meta/config` update, so the next lookup sees the new revision.
+Each parsed file is cached by (project, `refs/meta/config` revision), and each effective
+configuration by the list of (project, revision) pairs of the parent chain, All-Projects first.
+Gerrit evicts the project state on every `refs/meta/config` update and resolves parents
+through its project cache, so the next lookup sees the new revision of the project or of any
+ancestor.
 A push that updates `refs/meta/config` and source branches together does not synchronize the
 branches (ambiguous configuration); the output says so and `branch-review sync` resolves it.
 
@@ -230,8 +233,10 @@ and restore repositories as usual. After restoring an older backup, run
 NoteDb on the next push, sync or recovery pass. The state format carries a `format` number for
 future migrations.
 
-Disabling (`enabled = false`, file removal, or `[plugin "branch-review"] disabled = true`)
-stops all synchronization, guards and cleanups; Changes stay open and branches are kept.
+Disabling (`enabled = false` in the project's own file, or `[plugin "branch-review"] disabled =
+true`) stops all synchronization, guards and cleanups; Changes stay open and branches are kept.
+Removing the project's file is not a way to disable: the project then inherits its parents'
+configuration (see [inheritance](configuration.md#inheritance)).
 Uninstalling the JAR has the same effect; the state refs remain and can be deleted by an
 administrator with `git push origin :refs/meta/branch-review/...` only after uninstalling
 (the plugin rejects such pushes while loaded).

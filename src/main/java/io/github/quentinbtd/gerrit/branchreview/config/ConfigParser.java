@@ -4,13 +4,17 @@
 package io.github.quentinbtd.gerrit.branchreview.config;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
@@ -29,9 +33,17 @@ import org.eclipse.jgit.lib.Repository;
  *     syncEditsToBranch = true                # default for every route
  *     workInProgress = true                   # new Changes start WIP (default for every route)
  * [target "refs/heads/dev"]                   # one section per routed target
- *     sourceBranchPattern = refs/heads/dev/*
+ *     sourceBranchPattern = refs/heads/dev-*
  *     deleteSourceBranchOnSubmit = true       # optional override
  * </pre>
+ *
+ * <p>A project's effective configuration is the files of its parent chain merged from the root
+ * (All-Projects) down to the project ({@link #merge}): every key set in a lower file replaces the
+ * inherited value (lists included), {@code [target]} sections are merged by target branch key by
+ * key, and {@code enabled = false} in a {@code [target]} section removes an inherited route. An
+ * empty value ({@code targetBranch =}, {@code excludeBranchPattern =}) clears an inherited value.
+ * Each file is checked on its own ({@link #parseLayer}); the rules that need the whole picture
+ * (required keys, overlapping routes, ...) apply to the effective configuration.
  */
 public final class ConfigParser {
   public static final String FILE_NAME = "branch-review.config";
@@ -50,25 +62,98 @@ public final class ConfigParser {
       ImmutableSet.of(
           KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
   private static final ImmutableSet<String> TARGET_KEYS =
-      ImmutableSet.of(KEY_SOURCE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
+      ImmutableSet.of(KEY_ENABLED, KEY_SOURCE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
+
+  /**
+   * The settings of one file. An empty {@link Optional} means "not set in this file": the value is
+   * inherited from the files above.
+   */
+  public record Layer(
+      String source,
+      Optional<Boolean> enabled,
+      Optional<String> targetBranch,
+      Optional<ImmutableList<RefPattern>> sourcePatterns,
+      Optional<ImmutableList<RefPattern>> excludePatterns,
+      Optional<Boolean> deleteSourceBranchOnSubmit,
+      Optional<Boolean> syncEditsToBranch,
+      Optional<Boolean> workInProgress,
+      ImmutableMap<String, LayerRoute> targets,
+      ImmutableList<String> errors) {
+    static Layer empty(String source, List<String> errors) {
+      return new Layer(
+          source,
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          ImmutableMap.of(),
+          ImmutableList.copyOf(errors));
+    }
+
+    /** Whether this file sets nothing (absent, blank, or only comments). */
+    public boolean isEmpty() {
+      return errors.isEmpty()
+          && targets.isEmpty()
+          && enabled.isEmpty()
+          && targetBranch.isEmpty()
+          && sourcePatterns.isEmpty()
+          && excludePatterns.isEmpty()
+          && deleteSourceBranchOnSubmit.isEmpty()
+          && syncEditsToBranch.isEmpty()
+          && workInProgress.isEmpty();
+    }
+  }
+
+  /** A {@code [target]} section of one file; empty values are inherited. */
+  public record LayerRoute(
+      Optional<Boolean> enabled,
+      Optional<ImmutableList<RefPattern>> sourcePatterns,
+      Optional<Boolean> deleteSourceBranchOnSubmit,
+      Optional<Boolean> syncEditsToBranch,
+      Optional<Boolean> workInProgress) {
+    static final LayerRoute EMPTY =
+        new LayerRoute(
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty());
+
+    /** This section's values where set, the inherited section's values otherwise. */
+    LayerRoute over(LayerRoute inherited) {
+      return new LayerRoute(
+          enabled.or(inherited::enabled),
+          sourcePatterns.or(inherited::sourcePatterns),
+          deleteSourceBranchOnSubmit.or(inherited::deleteSourceBranchOnSubmit),
+          syncEditsToBranch.or(inherited::syncEditsToBranch),
+          workInProgress.or(inherited::workInProgress));
+    }
+  }
 
   private ConfigParser() {}
 
-  /** Parses raw file text; {@code null} or empty text means "file absent". */
+  /** Parses a single file; {@code null} or empty text means "file absent" (disabled). */
   public static BranchReviewConfig parseText(String text) {
+    return merge(List.of(parseLayer(text, "")));
+  }
+
+  /**
+   * Parses one file into a {@link Layer}, checking everything that does not depend on other files.
+   * {@code source} names the file's project in error messages (empty for a single file).
+   */
+  public static Layer parseLayer(String text, String source) {
     if (text == null || text.isBlank()) {
-      return BranchReviewConfig.disabled();
+      return Layer.empty(source, List.of());
     }
     Config cfg = new Config();
     try {
       cfg.fromText(text);
     } catch (ConfigInvalidException e) {
-      return BranchReviewConfig.invalid(ImmutableList.of("syntax error: " + e.getMessage()));
+      return Layer.empty(source, List.of("syntax error: " + e.getMessage()));
     }
-    return parse(cfg);
-  }
-
-  public static BranchReviewConfig parse(Config cfg) {
     List<String> errors = new ArrayList<>();
     for (String section : cfg.getSections()) {
       if (!section.equals(SECTION) && !section.equals(TARGET_SECTION)) {
@@ -87,73 +172,132 @@ public final class ConfigParser {
         errors.add(SECTION + "." + single + " must be set at most once");
       }
     }
-
-    Boolean enabled = parseBoolean(cfg, SECTION, null, KEY_ENABLED, errors).orElse(false);
-    boolean delete = parseBoolean(cfg, SECTION, null, KEY_DELETE, errors).orElse(false);
-    boolean syncEdits = parseBoolean(cfg, SECTION, null, KEY_SYNC_EDITS, errors).orElse(true);
-    boolean wip = parseBoolean(cfg, SECTION, null, KEY_WIP, errors).orElse(true);
-    // Patterns and routes are validated even when disabled so that a file can be reviewed first.
-    ImmutableList<RefPattern> sources = parsePatterns(cfg, SECTION, null, KEY_SOURCE, errors);
-    ImmutableList<RefPattern> excludes = parsePatterns(cfg, SECTION, null, KEY_EXCLUDE, errors);
-    List<BranchReviewConfig.Route> routes = new ArrayList<>();
-    for (String target : new TreeSet<>(cfg.getSubsections(TARGET_SECTION))) {
-      String where = TARGET_SECTION + " \"" + target + "\"";
-      checkTarget(where, target, errors);
-      checkKeys(cfg, TARGET_SECTION, target, TARGET_KEYS, errors);
-      for (String single : List.of(KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP)) {
-        if (cfg.getStringList(TARGET_SECTION, target, single).length > 1) {
+    Optional<String> target = Optional.empty();
+    if (isSet(cfg, SECTION, null, KEY_TARGET)) {
+      String t = cfg.getString(SECTION, null, KEY_TARGET);
+      t = t == null ? "" : t.strip();
+      if (!t.isEmpty()) {
+        checkTarget(SECTION + "." + KEY_TARGET, t, errors);
+      }
+      target = Optional.of(t);
+    }
+    Map<String, LayerRoute> targets = new TreeMap<>();
+    for (String t : new TreeSet<>(cfg.getSubsections(TARGET_SECTION))) {
+      String where = TARGET_SECTION + " \"" + t + "\"";
+      checkTarget(where, t, errors);
+      checkKeys(cfg, TARGET_SECTION, t, TARGET_KEYS, errors);
+      for (String single : List.of(KEY_ENABLED, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP)) {
+        if (cfg.getStringList(TARGET_SECTION, t, single).length > 1) {
           errors.add(where + "." + single + " must be set at most once");
         }
       }
-      ImmutableList<RefPattern> patterns =
-          parsePatterns(cfg, TARGET_SECTION, target, KEY_SOURCE, errors);
-      if (patterns.isEmpty() && cfg.getStringList(TARGET_SECTION, target, KEY_SOURCE).length == 0) {
-        errors.add("[" + where + "] needs at least one " + KEY_SOURCE);
+      targets.put(
+          t,
+          new LayerRoute(
+              parseBoolean(cfg, TARGET_SECTION, t, KEY_ENABLED, errors),
+              parsePatterns(cfg, TARGET_SECTION, t, KEY_SOURCE, errors),
+              parseBoolean(cfg, TARGET_SECTION, t, KEY_DELETE, errors),
+              parseBoolean(cfg, TARGET_SECTION, t, KEY_SYNC_EDITS, errors),
+              parseBoolean(cfg, TARGET_SECTION, t, KEY_WIP, errors)));
+    }
+    return new Layer(
+        source,
+        parseBoolean(cfg, SECTION, null, KEY_ENABLED, errors),
+        target,
+        parsePatterns(cfg, SECTION, null, KEY_SOURCE, errors),
+        parsePatterns(cfg, SECTION, null, KEY_EXCLUDE, errors),
+        parseBoolean(cfg, SECTION, null, KEY_DELETE, errors),
+        parseBoolean(cfg, SECTION, null, KEY_SYNC_EDITS, errors),
+        parseBoolean(cfg, SECTION, null, KEY_WIP, errors),
+        ImmutableMap.copyOf(targets),
+        ImmutableList.copyOf(errors));
+  }
+
+  /**
+   * Merges the files of a parent chain, root first, into the effective configuration and checks it.
+   * Errors of a file are reported with its project name when several files contribute.
+   */
+  public static BranchReviewConfig merge(List<Layer> rootFirst) {
+    List<String> errors = new ArrayList<>();
+    boolean attribute = rootFirst.stream().filter(l -> !l.isEmpty()).count() > 1;
+    for (Layer l : rootFirst) {
+      for (String e : l.errors()) {
+        errors.add(attribute ? "in " + l.source() + ": " + e : e);
       }
-      routes.add(
-          new BranchReviewConfig.Route(
-              target,
-              patterns,
-              parseBoolean(cfg, TARGET_SECTION, target, KEY_DELETE, errors),
-              parseBoolean(cfg, TARGET_SECTION, target, KEY_SYNC_EDITS, errors),
-              parseBoolean(cfg, TARGET_SECTION, target, KEY_WIP, errors)));
     }
     if (!errors.isEmpty()) {
       return BranchReviewConfig.invalid(ImmutableList.copyOf(errors));
+    }
+
+    boolean enabled = false;
+    String target = null;
+    ImmutableList<RefPattern> sources = ImmutableList.of();
+    ImmutableList<RefPattern> excludes = ImmutableList.of();
+    boolean delete = false;
+    boolean syncEdits = true;
+    boolean wip = true;
+    Map<String, LayerRoute> routes = new LinkedHashMap<>();
+    for (Layer l : rootFirst) {
+      enabled = l.enabled().orElse(enabled);
+      if (l.targetBranch().isPresent()) {
+        target = l.targetBranch().get().isEmpty() ? null : l.targetBranch().get();
+      }
+      sources = l.sourcePatterns().orElse(sources);
+      excludes = l.excludePatterns().orElse(excludes);
+      delete = l.deleteSourceBranchOnSubmit().orElse(delete);
+      syncEdits = l.syncEditsToBranch().orElse(syncEdits);
+      wip = l.workInProgress().orElse(wip);
+      l.targets()
+          .forEach((t, r) -> routes.put(t, r.over(routes.getOrDefault(t, LayerRoute.EMPTY))));
     }
     if (!enabled) {
       return BranchReviewConfig.disabled();
     }
 
-    String target = cfg.getString(SECTION, null, KEY_TARGET);
-    if (target != null && !target.isEmpty()) {
-      checkTarget(SECTION + "." + KEY_TARGET, target, errors);
+    List<BranchReviewConfig.Route> effectiveRoutes = new ArrayList<>();
+    for (Map.Entry<String, LayerRoute> e : new TreeMap<>(routes).entrySet()) {
+      LayerRoute r = e.getValue();
+      if (!r.enabled().orElse(true)) {
+        continue; // Route removed by a lower file.
+      }
+      ImmutableList<RefPattern> patterns = r.sourcePatterns().orElse(ImmutableList.of());
+      if (patterns.isEmpty()) {
+        errors.add(
+            "[" + TARGET_SECTION + " \"" + e.getKey() + "\"] needs at least one " + KEY_SOURCE);
+      }
+      effectiveRoutes.add(
+          new BranchReviewConfig.Route(
+              e.getKey(),
+              patterns,
+              r.deleteSourceBranchOnSubmit(),
+              r.syncEditsToBranch(),
+              r.workInProgress()));
+    }
+
+    if (target != null) {
       if (sources.isEmpty()) {
         errors.add(
             "at least one " + SECTION + "." + KEY_SOURCE + " is required with " + KEY_TARGET);
       }
-    } else {
-      target = null;
-      if (!sources.isEmpty()) {
-        errors.add(
-            SECTION
-                + "."
-                + KEY_TARGET
-                + " is required for the "
-                + SECTION
-                + "."
-                + KEY_SOURCE
-                + " patterns");
-      } else if (routes.isEmpty()) {
-        errors.add(
-            "nothing to review: set "
-                + SECTION
-                + "."
-                + KEY_TARGET
-                + " with "
-                + KEY_SOURCE
-                + " patterns, or add [target \"refs/heads/...\"] sections");
-      }
+    } else if (!sources.isEmpty()) {
+      errors.add(
+          SECTION
+              + "."
+              + KEY_TARGET
+              + " is required for the "
+              + SECTION
+              + "."
+              + KEY_SOURCE
+              + " patterns");
+    } else if (effectiveRoutes.isEmpty()) {
+      errors.add(
+          "nothing to review: set "
+              + SECTION
+              + "."
+              + KEY_TARGET
+              + " with "
+              + KEY_SOURCE
+              + " patterns, or add [target \"refs/heads/...\"] sections");
     }
 
     // A pattern naming a target exactly is a mistake: targets are never sources.
@@ -161,10 +305,10 @@ public final class ConfigParser {
     if (target != null) {
       targetsBuilder.add(target);
     }
-    routes.forEach(r -> targetsBuilder.add(r.target()));
+    effectiveRoutes.forEach(r -> targetsBuilder.add(r.target()));
     ImmutableSet<String> targets = targetsBuilder.build();
     List<RefPattern> all = new ArrayList<>(sources);
-    routes.forEach(r -> all.addAll(r.sourcePatterns()));
+    effectiveRoutes.forEach(r -> all.addAll(r.sourcePatterns()));
     for (RefPattern p : all) {
       if (!p.isWildcard() && targets.contains(p.toString())) {
         errors.add(KEY_SOURCE + " " + p + " names a target branch");
@@ -191,7 +335,7 @@ public final class ConfigParser {
     // Overlapping routes are resolved by specificity at match time; the only undecidable case is
     // the very same pattern routed to two targets.
     Map<RefPattern, String> routedBy = new HashMap<>();
-    for (BranchReviewConfig.Route r : routes) {
+    for (BranchReviewConfig.Route r : effectiveRoutes) {
       for (RefPattern p : r.sourcePatterns()) {
         String other = routedBy.putIfAbsent(p, r.target());
         if (other != null && !other.equals(r.target())) {
@@ -207,7 +351,7 @@ public final class ConfigParser {
         target,
         sources,
         excludes,
-        ImmutableList.copyOf(routes),
+        ImmutableList.copyOf(effectiveRoutes),
         delete,
         syncEdits,
         wip,
@@ -233,9 +377,13 @@ public final class ConfigParser {
     }
   }
 
+  private static boolean isSet(Config cfg, String section, String sub, String key) {
+    return cfg.getNames(section, sub).stream().anyMatch(n -> n.equalsIgnoreCase(key));
+  }
+
   private static Optional<Boolean> parseBoolean(
       Config cfg, String section, String sub, String key, List<String> errors) {
-    if (cfg.getNames(section, sub).stream().noneMatch(n -> n.equalsIgnoreCase(key))) {
+    if (!isSet(cfg, section, sub, key)) {
       return Optional.empty();
     }
     try {
@@ -250,10 +398,21 @@ public final class ConfigParser {
     }
   }
 
-  private static ImmutableList<RefPattern> parsePatterns(
+  /**
+   * The patterns of {@code key}: empty Optional when the key is absent (inherited); an empty list
+   * when it is set to an empty value, which clears the inherited list.
+   */
+  private static Optional<ImmutableList<RefPattern>> parsePatterns(
       Config cfg, String section, String sub, String key, List<String> errors) {
+    if (!isSet(cfg, section, sub, key)) {
+      return Optional.empty();
+    }
+    String[] raws = cfg.getStringList(section, sub, key);
+    if (Arrays.stream(raws).allMatch(r -> r == null || r.isEmpty())) {
+      return Optional.of(ImmutableList.of());
+    }
     ImmutableList.Builder<RefPattern> out = ImmutableList.builder();
-    for (String raw : cfg.getStringList(section, sub, key)) {
+    for (String raw : raws) {
       try {
         out.add(RefPattern.parse(raw));
       } catch (IllegalArgumentException e) {
@@ -267,6 +426,6 @@ public final class ConfigParser {
                 + e.getMessage());
       }
     }
-    return out.build().stream().distinct().collect(ImmutableList.toImmutableList());
+    return Optional.of(out.build().stream().distinct().collect(ImmutableList.toImmutableList()));
   }
 }

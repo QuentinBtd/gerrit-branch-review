@@ -360,7 +360,7 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
       throws MergeValidationException {
     try {
       List<String> errors =
-          configValidator.validate(project.getNameKey(), rw.getObjectReader(), commit);
+          configValidator.validate(project.getNameKey(), rw.getObjectReader(), commit).errors();
       if (!errors.isEmpty()) {
         throw new MergeValidationException(
             "invalid " + ConfigParser.FILE_NAME + ": " + String.join("; ", errors));

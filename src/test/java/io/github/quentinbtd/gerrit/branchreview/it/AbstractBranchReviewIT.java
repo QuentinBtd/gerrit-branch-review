@@ -12,6 +12,7 @@ import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.TestPlugin;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.entities.Permission;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.server.group.SystemGroupBackend;
@@ -75,7 +76,12 @@ public abstract class AbstractBranchReviewIT extends LightweightPluginDaemonTest
 
   /** Writes branch-review.config at the root of refs/meta/config (as the server). */
   protected void setConfig(String text) throws Exception {
-    try (Repository repo = repoManager.openRepository(project);
+    setConfig(project, text);
+  }
+
+  /** Writes branch-review.config at the root of refs/meta/config of {@code p} (as the server). */
+  protected void setConfig(Project.NameKey p, String text) throws Exception {
+    try (Repository repo = repoManager.openRepository(p);
         TestRepository<Repository> tr = new TestRepository<>(repo)) {
       var b = tr.branch("refs/meta/config").commit().message("update branch-review.config");
       if (text == null) {
@@ -85,7 +91,7 @@ public abstract class AbstractBranchReviewIT extends LightweightPluginDaemonTest
       }
       b.create();
     }
-    projectCache.evictAndReindex(project);
+    projectCache.evictAndReindex(p);
   }
 
   protected void enable() throws Exception {

@@ -15,7 +15,6 @@ import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.PushResult;
-import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -277,7 +276,7 @@ public class RoutingIT extends AbstractBranchReviewIT {
   }
 
   @Test
-  public void configWithAMissingTargetIsRejected() throws Exception {
+  public void configWithAMissingTargetIsAcceptedWithAWarning() throws Exception {
     TestRepository<InMemoryRepository> admin = cloneAs(this.admin);
     admin.git().fetch().setRemote("origin").setRefSpecs("refs/meta/config:refs/meta/config").call();
     admin.reset("refs/meta/config");
@@ -292,8 +291,7 @@ public class RoutingIT extends AbstractBranchReviewIT {
             ROUTED + "[target \"refs/heads/qa\"]\n  sourceBranchPattern = refs/heads/qa-*\n")
         .create();
     PushResult r = push(admin, "HEAD:refs/meta/config", false);
-    assertThat(r.getRemoteUpdate("refs/meta/config").getStatus())
-        .isNotEqualTo(RemoteRefUpdate.Status.OK);
+    assertOk(r, "refs/meta/config");
     assertThat(r.getMessages()).contains("target branch refs/heads/qa does not exist");
   }
 }

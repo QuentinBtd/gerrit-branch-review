@@ -17,6 +17,8 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -27,13 +29,15 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
 /**
- * Loads {@code branch-review.config} from the root of a project's {@code refs/meta/config}.
+ * Loads the effective {@code branch-review.config} of a project: the files at the root of the
+ * {@code refs/meta/config} of every project in its parent chain, merged from All-Projects down to
+ * the project ({@link ConfigParser#merge}).
  *
- * <p>The file is read from the exact {@code refs/meta/config} revision of the cached {@link
- * ProjectState}, and parsed results are cached by (project, revision). A config update produces a
- * new revision and therefore a new cache key; Gerrit's project cache eviction on {@code
- * refs/meta/config} updates keeps the revision current. There is deliberately no inheritance from
- * parent projects.
+ * <p>Each file is read from the exact {@code refs/meta/config} revision of the cached {@link
+ * ProjectState}; parsed files are cached by (project, revision) and merged results by the whole
+ * chain of (project, revision) pairs. A config update in any ancestor produces a new revision and
+ * therefore a new chain key; Gerrit's project cache eviction on {@code refs/meta/config} updates
+ * keeps the revisions current.
  */
 @Singleton
 public class ProjectConfigLoader {
@@ -43,7 +47,9 @@ public class ProjectConfigLoader {
 
   private final ProjectCache projectCache;
   private final GitRepositoryManager repoManager;
-  private final Cache<Key, BranchReviewConfig> cache =
+  private final Cache<Key, ConfigParser.Layer> layers =
+      CacheBuilder.newBuilder().maximumSize(2000).build();
+  private final Cache<List<Key>, BranchReviewConfig> merged =
       CacheBuilder.newBuilder().maximumSize(2000).build();
 
   @Inject
@@ -57,26 +63,63 @@ public class ProjectConfigLoader {
     if (state.isEmpty()) {
       return BranchReviewConfig.disabled();
     }
-    Optional<ObjectId> rev = state.get().getConfig().getRevision();
-    if (rev.isEmpty()) {
-      return BranchReviewConfig.disabled();
-    }
-    Key key = new Key(project, rev.get().copy());
-    BranchReviewConfig cached = cache.getIfPresent(key);
+    List<Key> chain = chain(state.get());
+    BranchReviewConfig cached = merged.getIfPresent(chain);
     if (cached != null) {
       return cached;
     }
     BranchReviewConfig cfg;
-    try (Repository repo = repoManager.openRepository(project)) {
-      cfg = ConfigParser.parseText(readFile(repo, rev.get()));
+    try {
+      cfg = ConfigParser.merge(layers(chain));
     } catch (IOException e) {
-      log.atWarning().withCause(e).log("cannot read %s of %s", ConfigParser.FILE_NAME, project);
+      log.atWarning().withCause(e).log("cannot read %s for %s", ConfigParser.FILE_NAME, project);
       // Not cached: a transient read error must not stick.
       return BranchReviewConfig.invalid(
           ImmutableList.of("cannot read " + ConfigParser.FILE_NAME + ": " + e.getMessage()));
     }
-    cache.put(key, cfg);
+    merged.put(chain, cfg);
     return cfg;
+  }
+
+  /**
+   * The effective configuration {@code own} would give a project whose parent is {@code parent}
+   * (absent for All-Projects), with the ancestors' current files.
+   */
+  public BranchReviewConfig loadWith(Optional<Project.NameKey> parent, ConfigParser.Layer own)
+      throws IOException {
+    List<ConfigParser.Layer> all = new ArrayList<>();
+    if (parent.isPresent()) {
+      Optional<ProjectState> state = projectCache.get(parent.get());
+      if (state.isPresent()) {
+        all.addAll(layers(chain(state.get())));
+      }
+    }
+    all.add(own);
+    return ConfigParser.merge(all);
+  }
+
+  /** (project, revision) from All-Projects down to {@code state}; projects without one skipped. */
+  private static List<Key> chain(ProjectState state) {
+    List<Key> chain = new ArrayList<>();
+    for (ProjectState s : state.treeInOrder()) {
+      s.getConfig().getRevision().ifPresent(r -> chain.add(new Key(s.getNameKey(), r.copy())));
+    }
+    return List.copyOf(chain);
+  }
+
+  private List<ConfigParser.Layer> layers(List<Key> chain) throws IOException {
+    List<ConfigParser.Layer> out = new ArrayList<>(chain.size());
+    for (Key k : chain) {
+      ConfigParser.Layer layer = layers.getIfPresent(k);
+      if (layer == null) {
+        try (Repository repo = repoManager.openRepository(k.project())) {
+          layer = ConfigParser.parseLayer(readFile(repo, k.revision()), k.project().get());
+        }
+        layers.put(k, layer);
+      }
+      out.add(layer);
+    }
+    return out;
   }
 
   /** Reads the file at {@code commit}, or returns {@code null} if absent. */

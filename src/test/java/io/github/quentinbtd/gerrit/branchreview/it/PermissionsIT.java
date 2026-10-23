@@ -180,8 +180,11 @@ public class PermissionsIT extends AbstractBranchReviewIT {
         .add("branch-review.config", DEFAULT_CONFIG.replace("refs/heads/master", "refs/heads/nope"))
         .create();
     r = push(repo, "HEAD:refs/meta/config", false);
+    // Accepted with a warning: the route only becomes active once the branch exists.
+    assertOk(r, "refs/meta/config");
     assertThat(r.getMessages()).contains("target branch refs/heads/nope does not exist");
 
+    repo.git().fetch().setRemote("origin").setRefSpecs("+refs/meta/config:refs/meta/config").call();
     repo.reset("refs/meta/config");
     repo.branch("HEAD")
         .commit()
