@@ -49,6 +49,9 @@ Commit `branch-review.config` at the root of the project's `refs/meta/config`
     deleteSourceBranchOnSubmit = false
 ```
 
+Several targets can be routed by pattern with `[target "<branch>"]` sections (e.g. `refs/heads/dev/*`
+to `refs/heads/develop`); see [configuration](docs/configuration.md#several-target-branches-target-branch).
+
 Developers need the usual branch permissions (`create`/`push` on the source branches) **and**
 review permissions on the target (`push` on `refs/for/refs/heads/master`). Pushing a branch never
 grants review rights.

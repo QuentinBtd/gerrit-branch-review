@@ -88,7 +88,8 @@ public class ConfigParserTest {
         VALID + "  syncEditsToBranch = sometimes\n", "syncEditsToBranch must be true or false");
     assertInvalid(
         VALID.replace("refs/heads/feature/*", "^refs/heads/feature/.*"), "regular expressions");
-    assertInvalid(VALID.replace("refs/heads/feature/*", "refs/heads/*/feature"), "last character");
+    assertInvalid(
+        VALID.replace("refs/heads/feature/*", "refs/heads/fe*ture/x"), "must be a whole segment");
     assertInvalid(
         VALID.replace("refs/heads/feature/*", "refs/heads/feat?re"), "unsupported character");
     assertInvalid(
@@ -119,12 +120,169 @@ public class ConfigParserTest {
     RefPattern prefix = RefPattern.parse("refs/heads/feature/*");
     assertThat(prefix.matches("refs/heads/feature/a/b")).isTrue();
     assertThat(prefix.matches("refs/heads/featurex")).isFalse();
-    assertThat(prefix.prefix()).isEqualTo("refs/heads/feature/");
+    assertThat(prefix.remainderOf("refs/heads/feature/a/b")).isEqualTo("a/b");
     RefPattern bare = RefPattern.parse("refs/heads/feat*");
     assertThat(bare.matches("refs/heads/feature")).isTrue();
     assertThrows(IllegalArgumentException.class, () -> RefPattern.parse(" refs/heads/x"));
     assertThrows(IllegalArgumentException.class, () -> RefPattern.parse("refs/heads/a..b"));
     assertThrows(IllegalArgumentException.class, () -> RefPattern.parse("refs/heads/"));
+  }
+
+  @Test
+  public void midPathWildcardMatchesExactlyOneSegment() {
+    RefPattern p = RefPattern.parse("refs/heads/*/feat/*");
+    assertThat(p.matches("refs/heads/alice/feat/login")).isTrue();
+    assertThat(p.matches("refs/heads/alice/feat/a/b")).isTrue();
+    assertThat(p.remainderOf("refs/heads/alice/feat/a/b")).isEqualTo("a/b");
+    assertThat(p.matches("refs/heads/a/b/feat/x")).isFalse();
+    assertThat(p.matches("refs/heads/feat/x")).isFalse();
+    assertThat(p.matches("refs/heads/alice/feat")).isFalse();
+    RefPattern exact = RefPattern.parse("refs/heads/*/release");
+    assertThat(exact.matches("refs/heads/team/release")).isTrue();
+    assertThat(exact.matches("refs/heads/team/release/x")).isFalse();
+    assertThat(exact.remainderOf("refs/heads/team/release")).isEmpty();
+    for (String bad :
+        new String[] {
+          "refs/heads/fe*t/x", "refs/heads/**/x", "refs/heads/a*/x", "refs/*/x", "refs/heads/a/fe*t"
+        }) {
+      assertThrows(IllegalArgumentException.class, () -> RefPattern.parse(bad));
+    }
+  }
+
+  @Test
+  public void mostSpecificPatternWins() {
+    assertMoreSpecific("refs/heads/run/*", "refs/heads/*/feat/*");
+    assertMoreSpecific("refs/heads/dev/*", "refs/heads/*/chore/*");
+    assertMoreSpecific("refs/heads/run/*", "refs/heads/*");
+    assertMoreSpecific("refs/heads/feature/*", "refs/heads/feat*");
+    assertMoreSpecific("refs/heads/xy*", "refs/heads/x*");
+    assertMoreSpecific("refs/heads/a/b", "refs/heads/*/b");
+    // At the first differing segment, a literal prefix beats a whole-segment "*".
+    assertMoreSpecific("refs/heads/feat*", "refs/heads/*/feat/*");
+    assertMoreSpecific("refs/heads/*/feat/*", "refs/heads/*");
+    assertThat(
+            RefPattern.parse("refs/heads/a/*")
+                .compareSpecificity(RefPattern.parse("refs/heads/a/*")))
+        .isEqualTo(0);
+  }
+
+  private static void assertMoreSpecific(String a, String b) {
+    assertThat(RefPattern.parse(a).compareSpecificity(RefPattern.parse(b))).isGreaterThan(0);
+    assertThat(RefPattern.parse(b).compareSpecificity(RefPattern.parse(a))).isLessThan(0);
+  }
+
+  private static final String ROUTED =
+      """
+      [branchReview]
+        enabled = true
+        targetBranch = refs/heads/master
+        sourceBranchPattern = refs/heads/*
+        excludeBranchPattern = refs/heads/private/*
+        deleteSourceBranchOnSubmit = false
+      [target "refs/heads/develop"]
+        sourceBranchPattern = refs/heads/dev/*
+        sourceBranchPattern = refs/heads/*/feat/*
+        sourceBranchPattern = refs/heads/*/chore/*
+      [target "refs/heads/runtime"]
+        sourceBranchPattern = refs/heads/run/*
+        deleteSourceBranchOnSubmit = true
+        syncEditsToBranch = false
+      """;
+
+  @Test
+  public void routesSendBranchesToTheirTargetWithDefaultFallback() {
+    BranchReviewConfig c = ConfigParser.parseText(ROUTED);
+    assertThat(c.errors()).isEmpty();
+    assertThat(c.targets())
+        .containsExactly("refs/heads/master", "refs/heads/develop", "refs/heads/runtime");
+    assertThat(c.targetFor("refs/heads/dev/login")).hasValue("refs/heads/develop");
+    assertThat(c.targetFor("refs/heads/alice/feat/login")).hasValue("refs/heads/develop");
+    assertThat(c.targetFor("refs/heads/team/chore/deps")).hasValue("refs/heads/develop");
+    assertThat(c.targetFor("refs/heads/run/fix-42")).hasValue("refs/heads/runtime");
+    assertThat(c.targetFor("refs/heads/a/b/feat/x")).hasValue("refs/heads/master");
+    assertThat(c.targetFor("refs/heads/feature/x")).hasValue("refs/heads/master");
+    // Exclusions win, and targets are never sources.
+    assertThat(c.targetFor("refs/heads/private/x")).isEmpty();
+    assertThat(c.targetFor("refs/heads/develop")).isEmpty();
+    assertThat(c.targetFor("refs/heads/runtime")).isEmpty();
+    assertThat(c.targetFor("refs/heads/master")).isEmpty();
+    // Per-route overrides, defaults elsewhere.
+    assertThat(c.deleteSourceBranchOnSubmit("refs/heads/run/x")).isTrue();
+    assertThat(c.syncEditsToBranch("refs/heads/run/x")).isFalse();
+    assertThat(c.deleteSourceBranchOnSubmit("refs/heads/dev/x")).isFalse();
+    assertThat(c.syncEditsToBranch("refs/heads/dev/x")).isTrue();
+    assertThat(c.matchingPattern("refs/heads/alice/feat/login").map(Object::toString))
+        .hasValue("refs/heads/*/feat/*");
+  }
+
+  @Test
+  public void routesWithoutADefault() {
+    BranchReviewConfig c =
+        ConfigParser.parseText(
+            """
+            [branchReview]
+              enabled = true
+            [target "refs/heads/develop"]
+              sourceBranchPattern = refs/heads/dev/*
+            """);
+    assertThat(c.isEnabled()).isTrue();
+    assertThat(c.targetBranch()).isNull();
+    assertThat(c.targetFor("refs/heads/dev/x")).hasValue("refs/heads/develop");
+    assertThat(c.targetFor("refs/heads/feature/x")).isEmpty();
+  }
+
+  @Test
+  public void overlappingRoutesPickTheMostSpecificPattern() {
+    BranchReviewConfig c = ConfigParser.parseText(ROUTED);
+    // run/* (literal "run") beats */feat/* and */chore/* (mid-path "*").
+    assertThat(c.targetFor("refs/heads/run/feat/x")).hasValue("refs/heads/runtime");
+    assertThat(c.targetFor("refs/heads/run/chore/x")).hasValue("refs/heads/runtime");
+    assertThat(c.matchingPattern("refs/heads/run/feat/x").map(Object::toString))
+        .hasValue("refs/heads/run/*");
+    // dev/* beats */feat/* within the same route as well.
+    assertThat(c.matchingPattern("refs/heads/dev/feat/x").map(Object::toString))
+        .hasValue("refs/heads/dev/*");
+    // The default route is only a fallback, even when its pattern would be more specific.
+    BranchReviewConfig fallback =
+        ConfigParser.parseText(
+            ROUTED.replace(
+                "sourceBranchPattern = refs/heads/*\n",
+                "sourceBranchPattern = refs/heads/x/feat/*\n"));
+    assertThat(fallback.targetFor("refs/heads/x/feat/y")).hasValue("refs/heads/develop");
+  }
+
+  @Test
+  public void invalidRoutesAreRejected() {
+    assertInvalid(
+        ROUTED.replace(
+            "sourceBranchPattern = refs/heads/run/*", "sourceBranchPattern = refs/heads/dev/*"),
+        "sourceBranchPattern refs/heads/dev/* is routed to both refs/heads/develop and"
+            + " refs/heads/runtime");
+    assertInvalid(
+        ROUTED.replace("[target \"refs/heads/runtime\"]", "[target \"runtime\"]"),
+        "fully qualified");
+    assertInvalid(
+        ROUTED + "[target \"refs/heads/qa\"]\n  deleteSourceBranchOnSubmit = true\n",
+        "needs at least one");
+    assertInvalid(
+        ROUTED + "[target \"refs/heads/qa\"]\n  targetBranch = refs/heads/x\n",
+        "unknown key target");
+    assertInvalid(
+        ROUTED + "[target]\n  sourceBranchPattern = refs/heads/qa/*\n", "needs the target branch");
+    assertInvalid(
+        ROUTED.replace("syncEditsToBranch = false", "syncEditsToBranch = never"),
+        "must be true or false");
+    assertInvalid(
+        ROUTED + "[target \"refs/heads/qa\"]\n  sourceBranchPattern = refs/heads/develop\n",
+        "names a target branch");
+    assertInvalid(
+        ROUTED + "[target \"refs/heads/qa\"]\n  sourceBranchPattern = refs/heads/q*a/x\n",
+        "whole segment");
+    assertInvalid("[branchReview]\n enabled = true\n", "nothing to review");
+    assertInvalid(
+        "[branchReview]\n enabled = true\n[target \"refs/heads/dev\"]\n"
+            + " sourceBranchPattern = refs/heads/dev/*\n",
+        "lies under the target branch refs/heads/dev");
   }
 
   private static void assertInvalid(String text, String fragment) {

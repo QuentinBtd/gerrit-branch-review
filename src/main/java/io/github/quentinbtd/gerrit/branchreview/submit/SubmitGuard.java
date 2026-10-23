@@ -148,14 +148,19 @@ public class SubmitGuard implements MergeValidationListener, OnSubmitValidationL
                 + lc.targetRef
                 + "; move it back, or abandon it and start a new lifecycle");
       }
-      if (!cfg.targetBranch().equals(lc.targetRef)) {
+      // A branch that is no longer routed anywhere keeps its review as an ordinary Change; one
+      // routed to another target must not be submitted to the old one.
+      Optional<String> configured = cfg.targetFor(lc.sourceRef);
+      if (configured.isPresent() && !configured.get().equals(lc.targetRef)) {
         throw new MergeValidationException(
-            "branch-review: targetBranch is now "
-                + cfg.targetBranch()
+            "branch-review: the configured target of "
+                + lc.sourceRef
+                + " is now "
+                + configured.get()
                 + " but this review targets "
                 + lc.targetRef
-                + "; restore the previous targetBranch, or abandon the Change and start a new"
-                + " lifecycle");
+                + "; restore the previous target in branch-review.config, or abandon the Change"
+                + " and start a new lifecycle");
       }
       checkSubmitType(repo, commit, dest);
       checkSynchronized(repo, rw, commit, lc);

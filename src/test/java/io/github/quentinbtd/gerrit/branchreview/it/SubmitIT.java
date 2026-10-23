@@ -338,7 +338,9 @@ public class SubmitIT extends AbstractBranchReviewIT {
             "targetBranch = refs/heads/master", "targetBranch = refs/heads/stable"));
     ResourceConflictException e =
         assertThrows(ResourceConflictException.class, () -> approveAndSubmit(n));
-    assertThat(e).hasMessageThat().contains("targetBranch is now refs/heads/stable");
+    assertThat(e)
+        .hasMessageThat()
+        .contains("is now refs/heads/stable but this review targets refs/heads/master");
     assertThat(change(n).status).isEqualTo(ChangeStatus.NEW);
   }
 

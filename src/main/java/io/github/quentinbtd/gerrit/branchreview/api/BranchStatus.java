@@ -154,8 +154,13 @@ public class BranchStatus {
         if (changeVisible) {
           info.lastError = lc.lastError;
         }
-        if (lc.isActive() && cfg.isEnabled() && !cfg.targetBranch().equals(lc.targetRef)) {
-          problems.add("configured targetBranch differs from the lifecycle target " + lc.targetRef);
+        Optional<String> configured = cfg.targetFor(sourceRef);
+        if (lc.isActive() && configured.isPresent() && !configured.get().equals(lc.targetRef)) {
+          problems.add(
+              "configured target "
+                  + configured.get()
+                  + " differs from the lifecycle target "
+                  + lc.targetRef);
         }
         if (lc.isActive()
             && lc.syncState == Lifecycle.SyncState.SYNCED

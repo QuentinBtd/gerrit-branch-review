@@ -6,9 +6,9 @@ patch release, not every historical or future patch of its series; the matrix is
 
 | Gerrit release | Series | Java runtime | Artifact | Build | In-process acceptance | Black-box (packaged JAR, real SSH + smart HTTP) | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3.12.11 (`748845aa`) | 3.12 | Java 21: acceptance on Bazel `remotejdk_21`, black-box on the image's JRE 21.0.6+7 | `branch-review-<version>-gerrit-3.12.jar` | passed | passed (97 cases) | passed (9 cases) | supported |
-| 3.13.10 (`f9e70cda`) | 3.13 | Java 21: `remotejdk_21` / image JRE 21.0.8+9 | `branch-review-<version>-gerrit-3.13.jar` | passed | passed (97 cases) | passed (9 cases) | supported |
-| 3.14.4 (`6d038645`) | 3.14 | Java 21: `remotejdk_21` / image JRE 21.0.10+7 | `branch-review-<version>-gerrit-3.14.jar` | passed | passed (97 cases) | passed (9 cases) | supported (reference) |
+| 3.12.11 (`748845aa`) | 3.12 | Java 21: acceptance on Bazel `remotejdk_21`, black-box on the image's JRE 21.0.6+7 | `branch-review-<version>-gerrit-3.12.jar` | passed | passed (101 cases) | passed (9 cases) | supported |
+| 3.13.10 (`f9e70cda`) | 3.13 | Java 21: `remotejdk_21` / image JRE 21.0.8+9 | `branch-review-<version>-gerrit-3.13.jar` | passed | passed (101 cases) | passed (9 cases) | supported |
+| 3.14.4 (`6d038645`) | 3.14 | Java 21: `remotejdk_21` / image JRE 21.0.10+7 | `branch-review-<version>-gerrit-3.14.jar` | passed | passed (101 cases) | passed (9 cases) | supported (reference) |
 
 Evidence, commands and dates: [test-evidence.md](test-evidence.md).
 

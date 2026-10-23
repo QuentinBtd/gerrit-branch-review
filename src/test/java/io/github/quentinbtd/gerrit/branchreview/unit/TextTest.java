@@ -44,6 +44,16 @@ public class TextTest {
   }
 
   @Test
+  public void subjectUsesWhatTheTrailingWildcardMatched() {
+    Generated g =
+        MessageGenerator.generate(
+            "refs/heads/alice/feat/add-login",
+            RefPattern.parse("refs/heads/*/feat/*"),
+            List.of(c("a", "x"), c("b", "y")));
+    assertThat(g.subject()).isEqualTo("Add login");
+  }
+
+  @Test
   public void singleCommitUsesItsMessageWithoutTrailers() {
     Generated g =
         MessageGenerator.generate(

@@ -21,34 +21,93 @@ restrict the plugin. Example: [`examples/branch-review.config`](../examples/bran
 | Key | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | no | `false` | Explicit opt-in. Missing file, missing key or `false` = disabled |
-| `targetBranch` | when enabled | — | Fully qualified, existing branch (`refs/heads/master`, `refs/heads/main`, …). Fixed per lifecycle |
-| `sourceBranchPattern` | when enabled, ≥1 | — | Source branches; repeat the key, patterns are ORed |
-| `excludeBranchPattern` | no | none | Exclusions; they win over source patterns |
-| `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission |
-| `syncEditsToBranch` | no | `true` | Content edits made in Gerrit (inline edit, upload to the Change) are committed back onto the source branch (see [architecture](architecture.md#edits-made-in-gerrit)). `false` keeps the conservative pause |
+| `targetBranch` | with `sourceBranchPattern` | — | Target of the **default route**: fully qualified, existing branch (`refs/heads/master`, `refs/heads/main`, …). Fixed per lifecycle |
+| `sourceBranchPattern` | with `targetBranch` | — | Sources of the default route; repeat the key, patterns are ORed |
+| `excludeBranchPattern` | no | none | Exclusions; they win over every route |
+| `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission. Default for every route |
+| `syncEditsToBranch` | no | `true` | Content edits made in Gerrit (inline edit, upload to the Change) are committed back onto the source branch (see [architecture](architecture.md#edits-made-in-gerrit)). `false` keeps the conservative pause. Default for every route |
+
+An enabled file needs at least one route: the default route (`targetBranch` with
+`sourceBranchPattern`), one or more `[target]` sections, or both.
+
+### Several target branches: `[target "<branch>"]`
+
+Each `[target]` section routes source branches to its own target. Its name is the fully
+qualified, existing target branch:
+
+```ini
+[branchReview]
+    enabled = true
+    # Default route: every eligible branch that no [target] section matches.
+    targetBranch = refs/heads/master
+    sourceBranchPattern = refs/heads/*
+    excludeBranchPattern = refs/heads/private/*
+
+[target "refs/heads/develop"]
+    sourceBranchPattern = refs/heads/dev/*
+    sourceBranchPattern = refs/heads/*/feat/*
+    sourceBranchPattern = refs/heads/*/chore/*
+
+[target "refs/heads/runtime"]
+    sourceBranchPattern = refs/heads/run/*
+    # Optional per-route overrides of the [branchReview] defaults.
+    deleteSourceBranchOnSubmit = true
+    syncEditsToBranch = false
+```
+
+| Pushed branch | Review target |
+| --- | --- |
+| `refs/heads/dev/login`, `refs/heads/alice/feat/search`, `refs/heads/team/chore/deps` | `refs/heads/develop` |
+| `refs/heads/run/fix-42`, `refs/heads/run/feat/x` | `refs/heads/runtime` |
+| `refs/heads/feature/x`, `refs/heads/a/b/feat/x` | `refs/heads/master` (default) |
+| `refs/heads/private/x`, `refs/heads/develop`, `refs/heads/runtime`, `refs/heads/master` | none |
+
+Keys of a `[target]` section: `sourceBranchPattern` (at least one), and optionally
+`deleteSourceBranchOnSubmit` and `syncEditsToBranch`.
+
+Routing rules:
+
+1. Exclusions (`[branchReview] excludeBranchPattern`) win; target branches are never sources.
+2. Among the `[target]` patterns matching a branch, the **most specific** wins, compared segment
+   by segment from the left; at the first difference a literal segment beats `prefix*`, which
+   beats a mid-path `*`, which beats a final `*`, and a longer `prefix*` beats a shorter one.
+   `refs/heads/run/feat/x` goes to `runtime` because `run` (literal) beats `*`.
+3. The default route applies only when no `[target]` pattern matches.
+
+The same pattern in two `[target]` sections is rejected. **A target cannot have source
+branches below it**: Git cannot store `refs/heads/dev` and `refs/heads/dev/x` at the same time,
+so `[target "refs/heads/dev"]` with `sourceBranchPattern = refs/heads/dev/*` is rejected; use
+`refs/heads/dev-*`, another prefix, or another target name.
+
+The target of a review is fixed when its Change is created. If a configuration change routes an
+active branch elsewhere, the lifecycle is `BLOCKED` (Submit too) until the previous routing is
+restored, or the Change is abandoned and `branch-review sync --new-lifecycle` starts a new one.
 
 Status of new Changes (WIP), WIP/Ready preservation and manual text preservation are fixed
 behaviour, not options.
 
 ### Pattern grammar
 
-Patterns are full ref names:
+Patterns are full ref names, matched segment by segment (`/`-separated):
 
 - exact: `refs/heads/release-notes` matches only that ref;
-- prefix: a single trailing `*`, e.g. `refs/heads/feature/*`, matches any non-empty remainder
-  including further `/` (`refs/heads/feature/a/b`). `refs/heads/feat*` matches
+- a `*` segment in the middle matches exactly one segment: `refs/heads/*/feat/*` matches
+  `refs/heads/alice/feat/x` but not `refs/heads/a/b/feat/x` nor `refs/heads/feat/x`;
+- a trailing `*` matches any non-empty remainder including further `/`:
+  `refs/heads/feature/*` matches `refs/heads/feature/a/b`, `refs/heads/feat*` matches
   `refs/heads/feature`.
 
-Anything else is rejected: `*` elsewhere, `?`, character classes, braces, `^…` Gerrit ACL
-regular expressions, patterns outside `refs/heads/`, invalid ref names, surrounding
-whitespace. Regardless of patterns, these are never sources: the target branch, anything
+Anything else is rejected: `*` inside a segment (`fe*t/x`), `**`, `?`, character classes,
+braces, `^…` Gerrit ACL regular expressions, patterns outside `refs/heads/`, invalid ref names,
+surrounding whitespace. Regardless of patterns, these are never sources: any target branch, anything
 outside `refs/heads/`, `refs/meta/*` (including plugin state), `refs/for/*`, `refs/changes/*`,
 tags.
 
 ### Validation
 
 Unknown sections, unknown keys, duplicated single-value keys, non-boolean booleans, invalid
-patterns and a missing/invalid/non-existing target are errors. They are rejected:
+patterns, a missing/invalid/non-existing target, a `[target]` section without patterns, the same
+pattern routed to two targets, and source patterns below a target branch are errors. They are rejected:
 
 - on direct pushes to `refs/meta/config` and uploads for review of `refs/meta/config`
   (`CommitValidationListener`, message names every problem);

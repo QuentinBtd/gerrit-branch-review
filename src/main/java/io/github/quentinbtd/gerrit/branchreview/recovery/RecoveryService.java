@@ -160,7 +160,7 @@ public class RecoveryService implements LifecycleListener {
           Optional<ChangeNotes> notes =
               change > 0 && lc.pending == null ? loadNotes(project, change) : Optional.empty();
           Optional<Account.Id> editor =
-              notes.isPresent() && cfg.syncEditsToBranch()
+              notes.isPresent() && cfg.syncEditsToBranch(lc.sourceRef)
                   ? unappliedEdit(repo, ins, rw, lc, notes.get())
                   : Optional.empty();
           if (notes.isPresent() && notes.get().getChange().isMerged()) {
