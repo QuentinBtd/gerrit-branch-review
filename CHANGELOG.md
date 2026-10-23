@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.2.0...v0.2.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **sync:** release the worker slot before publishing the result ([c7407f8](https://github.com/QuentinBtd/gerrit-branch-review/commit/c7407f8fd27e2dbad04dede7750dcd91f5d02f16))
+* **sync:** release the worker slot before publishing the result ([b7e5f81](https://github.com/QuentinBtd/gerrit-branch-review/commit/b7e5f81f44553b6838a5157349c37a6dcd6ad9ba))
+
 ## [0.2.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 
