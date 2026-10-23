@@ -7,7 +7,7 @@
   repositories: ['QuentinBtd/gerrit-branch-review'],
   onboarding: false,
   requireConfig: 'required',
-  // gitAuthor is provided by the workflow (RENOVATE_GIT_AUTHOR) to match the GitHub App bot.
+  // Leave gitAuthor unset: Renovate detects the personal access token owner's identity.
   // Only the reviewed Gerrit re-pinning script may run after an upgrade.
   allowedCommands: ['^python3 -I tools/scripts/pin_gerrit\\.py$'],
   // Lock file updates run the tools Renovate installs itself (e.g. mise for mise.lock).
