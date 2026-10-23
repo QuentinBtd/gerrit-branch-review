@@ -27,6 +27,7 @@ import org.eclipse.jgit.lib.Repository;
  *     excludeBranchPattern = refs/heads/private/*
  *     deleteSourceBranchOnSubmit = false      # default for every route
  *     syncEditsToBranch = true                # default for every route
+ *     workInProgress = true                   # new Changes start WIP (default for every route)
  * [target "refs/heads/dev"]                   # one section per routed target
  *     sourceBranchPattern = refs/heads/dev/*
  *     deleteSourceBranchOnSubmit = true       # optional override
@@ -43,11 +44,13 @@ public final class ConfigParser {
   static final String KEY_EXCLUDE = "excludeBranchPattern";
   static final String KEY_DELETE = "deleteSourceBranchOnSubmit";
   static final String KEY_SYNC_EDITS = "syncEditsToBranch";
+  static final String KEY_WIP = "workInProgress";
 
   private static final ImmutableSet<String> KNOWN_KEYS =
-      ImmutableSet.of(KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE, KEY_SYNC_EDITS);
+      ImmutableSet.of(
+          KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
   private static final ImmutableSet<String> TARGET_KEYS =
-      ImmutableSet.of(KEY_SOURCE, KEY_DELETE, KEY_SYNC_EDITS);
+      ImmutableSet.of(KEY_SOURCE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
 
   private ConfigParser() {}
 
@@ -79,7 +82,7 @@ public final class ConfigParser {
       errors.add("[" + TARGET_SECTION + "] needs the target branch: [target \"refs/heads/...\"]");
     }
     checkKeys(cfg, SECTION, null, KNOWN_KEYS, errors);
-    for (String single : List.of(KEY_ENABLED, KEY_TARGET, KEY_DELETE, KEY_SYNC_EDITS)) {
+    for (String single : List.of(KEY_ENABLED, KEY_TARGET, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP)) {
       if (cfg.getStringList(SECTION, null, single).length > 1) {
         errors.add(SECTION + "." + single + " must be set at most once");
       }
@@ -88,6 +91,7 @@ public final class ConfigParser {
     Boolean enabled = parseBoolean(cfg, SECTION, null, KEY_ENABLED, errors).orElse(false);
     boolean delete = parseBoolean(cfg, SECTION, null, KEY_DELETE, errors).orElse(false);
     boolean syncEdits = parseBoolean(cfg, SECTION, null, KEY_SYNC_EDITS, errors).orElse(true);
+    boolean wip = parseBoolean(cfg, SECTION, null, KEY_WIP, errors).orElse(true);
     // Patterns and routes are validated even when disabled so that a file can be reviewed first.
     ImmutableList<RefPattern> sources = parsePatterns(cfg, SECTION, null, KEY_SOURCE, errors);
     ImmutableList<RefPattern> excludes = parsePatterns(cfg, SECTION, null, KEY_EXCLUDE, errors);
@@ -96,7 +100,7 @@ public final class ConfigParser {
       String where = TARGET_SECTION + " \"" + target + "\"";
       checkTarget(where, target, errors);
       checkKeys(cfg, TARGET_SECTION, target, TARGET_KEYS, errors);
-      for (String single : List.of(KEY_DELETE, KEY_SYNC_EDITS)) {
+      for (String single : List.of(KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP)) {
         if (cfg.getStringList(TARGET_SECTION, target, single).length > 1) {
           errors.add(where + "." + single + " must be set at most once");
         }
@@ -111,7 +115,8 @@ public final class ConfigParser {
               target,
               patterns,
               parseBoolean(cfg, TARGET_SECTION, target, KEY_DELETE, errors),
-              parseBoolean(cfg, TARGET_SECTION, target, KEY_SYNC_EDITS, errors)));
+              parseBoolean(cfg, TARGET_SECTION, target, KEY_SYNC_EDITS, errors),
+              parseBoolean(cfg, TARGET_SECTION, target, KEY_WIP, errors)));
     }
     if (!errors.isEmpty()) {
       return BranchReviewConfig.invalid(ImmutableList.copyOf(errors));
@@ -205,6 +210,7 @@ public final class ConfigParser {
         ImmutableList.copyOf(routes),
         delete,
         syncEdits,
+        wip,
         ImmutableList.of());
   }
 

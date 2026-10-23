@@ -12,6 +12,7 @@ import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
 import java.util.List;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
@@ -101,6 +102,44 @@ public class CoreWorkflowIT extends AbstractBranchReviewIT {
         .isEqualTo("a content 3\n");
     assertThat(fileAt(org.eclipse.jgit.lib.ObjectId.fromString(rev), "b/file1.txt"))
         .isEqualTo("b content 1\n");
+  }
+
+  @Test
+  public void changesCanStartReadyForReview() throws Exception {
+    setConfig(DEFAULT_CONFIG + "  workInProgress = false\n");
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    commits(repo, "a", 1);
+    PushResult r = push(repo, FEATURE);
+    int n = onlyChange();
+    assertThat(change(n).workInProgress).isNull();
+    assertThat(joined(r)).contains(FEATURE + ": created Change " + n + " (ready)");
+    // The option only applies at creation: later state changes by users are kept.
+    gApi.changes().id(project.get(), n).setWorkInProgress();
+    commits(repo, "b", 1);
+    r = push(repo, FEATURE);
+    assertThat(change(n).workInProgress).isTrue();
+    assertThat(joined(r)).contains("with patch set 2 (WIP)");
+  }
+
+  @Test
+  public void workInProgressCanBeOverriddenPerRoute() throws Exception {
+    ObjectId stable = serverCommit("refs/heads/stable", "s.txt", "s\n");
+    setConfig(
+        DEFAULT_CONFIG
+            + "  workInProgress = false\n"
+            + "[target \"refs/heads/stable\"]\n"
+            + "  sourceBranchPattern = refs/heads/bugfix/*\n"
+            + "  workInProgress = true\n");
+    TestRepository<InMemoryRepository> repo = cloneAs(user);
+    commits(repo, "a", 1);
+    push(repo, FEATURE);
+    repo.reset(repo.getRevWalk().parseCommit(stable));
+    commits(repo, "b", 1);
+    push(repo, "refs/heads/bugfix/1");
+    assertThat(change(lifecycle(FEATURE).changeNumber).workInProgress).isNull();
+    var bugfix = change(lifecycle("refs/heads/bugfix/1").changeNumber);
+    assertThat(bugfix.branch).isEqualTo("stable");
+    assertThat(bugfix.workInProgress).isTrue();
   }
 
   @Test

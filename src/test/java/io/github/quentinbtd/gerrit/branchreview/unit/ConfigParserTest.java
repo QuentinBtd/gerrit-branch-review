@@ -285,6 +285,24 @@ public class ConfigParserTest {
         "lies under the target branch refs/heads/dev");
   }
 
+  @Test
+  public void workInProgressDefaultsToTrueAndCanBeOverriddenPerRoute() {
+    BranchReviewConfig c = ConfigParser.parseText(VALID);
+    assertThat(c.workInProgress("refs/heads/feature/x")).isTrue();
+    BranchReviewConfig ready =
+        ConfigParser.parseText(
+            VALID
+                + "  workInProgress = false\n"
+                + "[target \"refs/heads/stable\"]\n"
+                + "  sourceBranchPattern = refs/heads/stable-*\n"
+                + "  workInProgress = true\n");
+    assertThat(ready.errors()).isEmpty();
+    assertThat(ready.workInProgress("refs/heads/feature/x")).isFalse();
+    assertThat(ready.workInProgress("refs/heads/stable-fix")).isTrue();
+    assertInvalid(VALID + "  workInProgress = maybe\n", "workInProgress must be true or false");
+    assertInvalid(VALID + "  workInProgress = true\n  workInProgress = false\n", "at most once");
+  }
+
   private static void assertInvalid(String text, String fragment) {
     BranchReviewConfig c = ConfigParser.parseText(text);
     assertThat(c.status()).isEqualTo(BranchReviewConfig.Status.INVALID);

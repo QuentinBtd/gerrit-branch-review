@@ -58,7 +58,8 @@ grants review rights.
 
 ## Workflow
 
-1. `git push -u origin feature/x` — one WIP Change is created; the push prints its URL.
+1. `git push -u origin feature/x` — one WIP Change is created (or ready for review with
+   `workInProgress = false`); the push prints its URL.
 2. More commits, `git push` — the same Change gets a new patch set (its WIP/Ready state, reviewers,
    votes per Gerrit's copy rules, topic and hashtags are kept).
 3. Mark the Change ready in Gerrit, review as usual. File edits made in Gerrit are committed back

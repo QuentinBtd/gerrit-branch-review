@@ -533,13 +533,15 @@ public class SyncService {
     lc.observedSourceId = sourceId.name();
     stateId = store.saveLifecycle(repo, project, lc, stateId, "reserve change " + number);
 
+    // New Changes start WIP unless the route or project sets workInProgress = false.
+    boolean wip = cfg.workInProgress(sourceRef);
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
         BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
       bu.setRepository(repo, rw, ins);
       ChangeInserter ci =
           changeInserterFactory
               .create(Change.id(number), commit, target)
-              .setWorkInProgress(true)
+              .setWorkInProgress(wip)
               .setPatchSetDescription(describe(sourceRef, plan))
               .setMessage("Uploaded patch set 1: synchronized from branch (branch-review).");
       bu.insertChange(ci);
@@ -549,7 +551,7 @@ public class SyncService {
     }
     finalizePending(lc);
     store.saveLifecycle(repo, project, lc, stateId, "created change " + number);
-    return result(SyncResult.Kind.CREATED, project, lc, true);
+    return result(SyncResult.Kind.CREATED, project, lc, wip);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1027,11 +1029,14 @@ public class SyncService {
     if (lc.syncState == SyncState.SYNCED) {
       // The insertion succeeded; only a later step (e.g. indexing) failed.
       log.atWarning().withCause(e).log("post-insert failure for %s %s", project, sourceRef);
+      // Report the Change's actual state (WIP depends on configuration and on users).
+      boolean wip =
+          loadNotes(project, change).map(n -> n.getChange().isWorkInProgress()).orElse(false);
       return result(
           "create".equals(op) ? SyncResult.Kind.CREATED : SyncResult.Kind.UPDATED,
           project,
           lc,
-          true);
+          wip);
     }
     lc.lastError = cause.getMessage();
     lc.attempts++;
