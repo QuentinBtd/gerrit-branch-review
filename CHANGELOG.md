@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.1.0...v0.2.0) (2026-10-23)
+
+
+### Features
+
+* **config:** route source branches to several target branches ([a192c5b](https://github.com/QuentinBtd/gerrit-branch-review/commit/a192c5b7a20096a85fe5695b276882da81f365b4))
+* **config:** route source branches to several target branches ([a593566](https://github.com/QuentinBtd/gerrit-branch-review/commit/a5935661b9901ab5901520d14e90d30abe799ef7))
+
 ## 0.1.0 (2026-10-22)
 
 
