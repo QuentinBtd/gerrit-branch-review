@@ -104,7 +104,15 @@ public class RoutingIT extends AbstractBranchReviewIT {
     pushFrom(devTip, "refs/heads/dev/fix", "d");
     approveAndSubmit(lifecycle("refs/heads/run/fix").changeNumber);
     approveAndSubmit(lifecycle("refs/heads/dev/fix").changeNumber);
-    waitFor(() -> refValue("refs/heads/run/fix") == null);
+    // The ref is deleted before the cleanup result is persisted: wait for both.
+    waitFor(
+        () -> {
+          Lifecycle run = lifecycle("refs/heads/run/fix");
+          return run.merge != null
+              && "deleted".equals(run.merge.cleanup)
+              && refValue("refs/heads/run/fix") == null;
+        });
+    // MERGED and the "none" cleanup outcome are saved together.
     waitFor(() -> lifecycle("refs/heads/dev/fix").status == Lifecycle.Status.MERGED);
     // The run route deletes its source branches, the dev route (default false) keeps them.
     assertThat(refValue("refs/heads/dev/fix")).isNotNull();
