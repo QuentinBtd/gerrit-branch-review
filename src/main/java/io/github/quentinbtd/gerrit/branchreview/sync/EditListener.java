@@ -60,7 +60,7 @@ public class EditListener implements RevisionCreatedListener {
     }
     Project.NameKey project = Project.nameKey(event.getChange().project);
     BranchReviewConfig cfg = configLoader.load(project);
-    if (!cfg.isEnabled() || !cfg.syncEditsToBranch()) {
+    if (!cfg.isEnabled()) {
       return;
     }
     int number = event.getChange()._number;
@@ -71,7 +71,10 @@ public class EditListener implements RevisionCreatedListener {
         return;
       }
       Lifecycle lc = store.loadLifecycle(repo, link.value().sourceRef).value();
-      if (lc == null || !lc.isActive() || !link.value().lifecycleId.equals(lc.id)) {
+      if (lc == null
+          || !lc.isActive()
+          || !link.value().lifecycleId.equals(lc.id)
+          || !cfg.syncEditsToBranch(lc.sourceRef)) {
         return;
       }
       if (revision != null

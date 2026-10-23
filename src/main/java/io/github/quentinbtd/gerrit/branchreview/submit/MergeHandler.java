@@ -171,7 +171,7 @@ public class MergeHandler implements ChangeMergedListener {
           lc.merge.submitter = who;
           BranchReviewConfig cfg = configLoader.load(project);
           if (cfg.isEnabled()
-              && cfg.deleteSourceBranchOnSubmit()
+              && cfg.deleteSourceBranchOnSubmit(lc.sourceRef)
               && "none".equals(lc.merge.cleanup)) {
             lc.merge.cleanup = "pending";
           }
@@ -201,7 +201,7 @@ public class MergeHandler implements ChangeMergedListener {
     String rejection;
     BranchReviewConfig cfg = configLoader.load(project);
     Ref src = repo.exactRef(lc.sourceRef);
-    if (!cfg.isEnabled() || !cfg.deleteSourceBranchOnSubmit()) {
+    if (!cfg.isEnabled() || !cfg.deleteSourceBranchOnSubmit(lc.sourceRef)) {
       outcome = "skipped";
       detail = "deleteSourceBranchOnSubmit is not enabled at cleanup time";
     } else if (!cfg.isEligibleSource(lc.sourceRef)) {

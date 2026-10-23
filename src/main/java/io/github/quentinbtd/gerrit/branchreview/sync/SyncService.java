@@ -426,7 +426,7 @@ public class SyncService {
       ObjectId sourceId,
       IdentifiedUser user)
       throws IOException, ConcurrentUpdateException, PermissionBackendException {
-    String target = cfg.targetBranch();
+    String target = cfg.targetFor(sourceRef).orElseThrow();
     Ref targetRef = repo.exactRef(target);
     if (targetRef == null || targetRef.getObjectId() == null) {
       return SyncResult.of(
@@ -593,10 +593,11 @@ public class SyncService {
       throws IOException, ConcurrentUpdateException, PermissionBackendException {
     String sourceRef = lc.sourceRef;
     lc.lastActor = user.getAccountId().get();
-    if (!cfg.targetBranch().equals(lc.targetRef)) {
+    String configuredTarget = cfg.targetFor(sourceRef).orElseThrow();
+    if (!configuredTarget.equals(lc.targetRef)) {
       lc.syncState = SyncState.BLOCKED;
       lc.observedSourceId = sourceId.name();
-      lc.lastError = "configured target changed from " + lc.targetRef + " to " + cfg.targetBranch();
+      lc.lastError = "configured target changed from " + lc.targetRef + " to " + configuredTarget;
       store.saveLifecycle(repo, project, lc, stateId, "target changed");
       return SyncResult.of(
               SyncResult.Kind.NOT_SYNCHRONIZED,
@@ -607,7 +608,7 @@ public class SyncService {
                   + " keeps targeting "
                   + lc.targetRef
                   + ".",
-              "Restore the previous targetBranch, or abandon the Change and run"
+              "Restore the previous target in branch-review.config, or abandon the Change and run"
                   + " branch-review sync --new-lifecycle to review against the new target.")
           .withChange(
               lc.changeNumber,
@@ -658,7 +659,7 @@ public class SyncService {
         && !opts.acceptDivergence()) {
       // A human changed the reviewed content in Gerrit (inline edit, direct upload).
       EditBackport backport =
-          cfg.syncEditsToBranch()
+          cfg.syncEditsToBranch(sourceRef)
               ? backportEdits(
                   repo,
                   ins,
@@ -722,7 +723,7 @@ public class SyncService {
                 + " "
                 + current.commitId().name()
                 + " | git apply --3way");
-        if (cfg.syncEditsToBranch()) {
+        if (cfg.syncEditsToBranch(sourceRef)) {
           lines.add(
               "then commit and push; synchronization resumes once the branch contains the edits.");
           lines.add(

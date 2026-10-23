@@ -34,7 +34,7 @@ public class ServerSettings {
     pushWaitSeconds = clamp(cfg.getInt("pushWaitSeconds", 60), 1, 600);
     threads = clamp(cfg.getInt("threads", 2), 1, 32);
     maxQueued = clamp(cfg.getInt("maxQueued", 200), 1, 100_000);
-    recoveryIntervalSeconds = clamp(cfg.getInt("recoveryIntervalSeconds", 300), 0, 86_400);
+    recoveryIntervalSeconds = clamp(cfg.getInt("recoveryIntervalSeconds", 300), -1, 86_400);
     maxAttempts = clamp(cfg.getInt("maxAttempts", 5), 1, 100);
     stopGraceSeconds = clamp(cfg.getInt("stopGraceSeconds", 30), 0, 3600);
   }
@@ -64,7 +64,10 @@ public class ServerSettings {
     return maxQueued;
   }
 
-  /** 0 disables periodic recovery; startup recovery still runs. */
+  /**
+   * Seconds between recovery passes. 0 runs a single pass shortly after start; -1 disables
+   * automatic recovery (explicit {@code branch-review sync} still works).
+   */
   public int recoveryIntervalSeconds() {
     return recoveryIntervalSeconds;
   }

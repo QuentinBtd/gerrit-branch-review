@@ -78,7 +78,7 @@ Supported topology: one primary Gerrit server. Replicas only receive the replica
 | Rename | Deletion of the old name plus a new lifecycle for the new name |
 | Reuse after Submit | Accepted only if the submitted commit is in the new history (branch recreated from or merged with the target); otherwise refused with instructions |
 | Change moved to another branch in Gerrit | `BLOCKED`; Submit is refused; moving it back resumes synchronization |
-| `targetBranch` changed while a lifecycle is active | `BLOCKED`; the Change keeps its original target; abandon + `--new-lifecycle` or revert the config |
+| Routing changed (`targetBranch` or `[target]` sections) so an active branch maps to another target | `BLOCKED`; the Change keeps its original target; abandon + `--new-lifecycle` or revert the config |
 | Patterns changed so the branch no longer matches | Not synchronized, reported; nothing moves |
 | Mapping inconsistent | `BLOCKED`; automatic mutation stops; diagnose with `status` |
 | Patch set not produced by the plugin changes content | With `syncEditsToBranch` (default): the edit is committed onto the branch ([details](#edits-made-in-gerrit)). If that is impossible, or the option is off: `DIVERGED`, paused until the branch contains the edit (or `sync --accept-divergence` when the option is off) |

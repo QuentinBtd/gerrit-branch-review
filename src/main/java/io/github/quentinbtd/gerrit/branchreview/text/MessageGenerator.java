@@ -16,11 +16,11 @@ import java.util.Locale;
  * <ul>
  *   <li>If the contribution has exactly one non-merge commit, its subject and body (without its
  *       trailer block) are used.
- *   <li>Otherwise the subject is derived from the branch name: {@code refs/heads/} and the literal
- *       prefix of the matching wildcard pattern (e.g. {@code feature/}) are removed, runs of {@code
- *       -} and {@code _} become spaces and the first letter is capitalized. The body lists the
- *       non-merge contribution commits oldest first, one line each, bounded to {@link #MAX_LISTED}
- *       entries.
+ *   <li>Otherwise the subject is derived from the branch name: the part of the branch name matched
+ *       by the trailing {@code *} of the matching pattern is kept (e.g. {@code x} from {@code
+ *       refs/heads/feature/x}), runs of {@code -} and {@code _} become spaces and the first letter
+ *       is capitalized. The body lists the non-merge contribution commits oldest first, one line
+ *       each, bounded to {@link #MAX_LISTED} entries.
  * </ul>
  *
  * Control characters are removed; other Unicode is preserved.
@@ -79,11 +79,11 @@ public final class MessageGenerator {
 
   static String subjectFromBranch(String sourceRef, RefPattern pattern) {
     String name = sourceRef.substring("refs/heads/".length());
-    if (pattern != null && pattern.isWildcard() && sourceRef.startsWith(pattern.prefix())) {
-      String rest = sourceRef.substring(pattern.prefix().length());
-      if (!rest.isEmpty()) {
-        name = rest;
-      }
+    // What the pattern's trailing '*' matched, e.g. "add-x" for refs/heads/*/feat/* and
+    // refs/heads/alice/feat/add-x.
+    String rest = pattern == null ? null : pattern.remainderOf(sourceRef);
+    if (rest != null && !rest.isEmpty()) {
+      name = rest;
     }
     String words = Sanitizer.oneLine(name.replaceAll("[-_]+", " ")).replaceAll(" {2,}", " ");
     if (words.isEmpty()) {

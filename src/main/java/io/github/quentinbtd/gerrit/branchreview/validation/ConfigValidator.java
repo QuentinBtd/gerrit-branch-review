@@ -80,11 +80,15 @@ public class ConfigValidator implements CommitValidationListener {
     }
     if (cfg.isEnabled()) {
       try (Repository repo = repoManager.openRepository(project)) {
-        if (repo.exactRef(cfg.targetBranch()) == null) {
-          return ImmutableList.of("targetBranch " + cfg.targetBranch() + " does not exist");
+        ImmutableList.Builder<String> missing = ImmutableList.builder();
+        for (String target : cfg.targets()) {
+          if (repo.exactRef(target) == null) {
+            missing.add("target branch " + target + " does not exist");
+          }
         }
+        return missing.build();
       } catch (IOException e) {
-        throw new CommitValidationException("cannot verify targetBranch", e);
+        throw new CommitValidationException("cannot verify the target branches", e);
       }
     }
     return ImmutableList.of();

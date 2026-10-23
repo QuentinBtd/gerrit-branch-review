@@ -93,6 +93,9 @@ public class RecoveryService implements LifecycleListener {
       return;
     }
     int interval = settings.recoveryIntervalSeconds();
+    if (interval < 0) {
+      return; // Automatic recovery disabled; explicit branch-review sync still works.
+    }
     if (interval > 0) {
       task = pool.scheduleWithFixedDelay(this::runSafely, 30, interval, TimeUnit.SECONDS);
     } else {
@@ -160,7 +163,7 @@ public class RecoveryService implements LifecycleListener {
           Optional<ChangeNotes> notes =
               change > 0 && lc.pending == null ? loadNotes(project, change) : Optional.empty();
           Optional<Account.Id> editor =
-              notes.isPresent() && cfg.syncEditsToBranch()
+              notes.isPresent() && cfg.syncEditsToBranch(lc.sourceRef)
                   ? unappliedEdit(repo, ins, rw, lc, notes.get())
                   : Optional.empty();
           if (notes.isPresent() && notes.get().getChange().isMerged()) {
