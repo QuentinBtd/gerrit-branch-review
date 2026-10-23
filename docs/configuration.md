@@ -151,7 +151,7 @@ Effects of changes:
     pushWaitSeconds = 60          # how long a push waits for results (1..600)
     threads = 2                   # worker threads
     maxQueued = 200               # queued tasks before "server busy"; recovery uses at most half
-    recoveryIntervalSeconds = 300 # periodic recovery; 0 = only once after start
+    recoveryIntervalSeconds = 300 # periodic recovery; 0 = only once after start; -1 = never
     maxAttempts = 5               # automatic retries per failure
     stopGraceSeconds = 30         # on stop/reload, time before running work is interrupted
 ```

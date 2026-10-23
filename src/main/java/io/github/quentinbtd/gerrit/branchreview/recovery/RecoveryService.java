@@ -93,6 +93,9 @@ public class RecoveryService implements LifecycleListener {
       return;
     }
     int interval = settings.recoveryIntervalSeconds();
+    if (interval < 0) {
+      return; // Automatic recovery disabled; explicit branch-review sync still works.
+    }
     if (interval > 0) {
       task = pool.scheduleWithFixedDelay(this::runSafely, 30, interval, TimeUnit.SECONDS);
     } else {

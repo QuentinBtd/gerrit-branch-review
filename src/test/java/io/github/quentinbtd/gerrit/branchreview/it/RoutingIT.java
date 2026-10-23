@@ -112,6 +112,144 @@ public class RoutingIT extends AbstractBranchReviewIT {
     assertThat(lifecycle("refs/heads/dev/fix").merge.cleanup).isEqualTo("none");
   }
 
+  /** Default route syncs nothing back; develop opts in, runtime explicitly opts out. */
+  private static final String EDITS_ROUTED =
+      ROUTED
+          .replace(
+              "excludeBranchPattern = refs/heads/private/*",
+              "excludeBranchPattern = refs/heads/private/*\n  syncEditsToBranch = false")
+          .replace(
+              "sourceBranchPattern = refs/heads/*/chore/*",
+              "sourceBranchPattern = refs/heads/*/chore/*\n  syncEditsToBranch = true");
+
+  /** Project default on; the runtime route opts out. */
+  private static final String EDITS_OFF_FOR_RUNTIME =
+      ROUTED.replace(
+          "deleteSourceBranchOnSubmit = true",
+          "deleteSourceBranchOnSubmit = true\n  syncEditsToBranch = false");
+
+  private void editInGerrit(int change, String path, String content) throws Exception {
+    var edit = gApi.changes().id(project.get(), change).edit();
+    edit.create();
+    edit.modifyFile(path, com.google.gerrit.common.RawInputUtil.create(content));
+    edit.publish();
+  }
+
+  /** Pushes one more commit on {@code ref}; fails if someone else moved the branch meanwhile. */
+  private PushResult pushOnTop(String ref, ObjectId expectedTip, String prefix) throws Exception {
+    repo.reset(repo.getRevWalk().parseCommit(expectedTip));
+    commits(repo, prefix, 1);
+    PushResult r = push(repo, ref);
+    assertOk(r, ref);
+    return r;
+  }
+
+  @Test
+  // No automatic recovery pass: the edit must be carried over by the edit listener itself.
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.recoveryIntervalSeconds",
+      value = "-1")
+  public void routeOverrideEnablesEditTransferWhenTheProjectDefaultIsOff() throws Exception {
+    setConfig(EDITS_ROUTED);
+    ObjectId devStart = pushFrom(devTip, "refs/heads/dev/edit", "a");
+    ObjectId mainStart = pushFrom(refValue("refs/heads/master"), "refs/heads/feature/edit", "b");
+    int dev = lifecycle("refs/heads/dev/edit").changeNumber;
+    int main = lifecycle("refs/heads/feature/edit").changeNumber;
+
+    // Default route (off): the listener must not write the branch, so a push from the old tip is
+    // still a fast-forward, and synchronization pauses instead of carrying the edit over.
+    editInGerrit(main, "b/file1.txt", "edited on master route\n");
+    PushResult r = pushOnTop("refs/heads/feature/edit", mainStart, "c");
+    assertThat(joined(r)).contains("was not produced by branch-review");
+    // The disabled path: never written back, resumed only by an explicit accept-divergence.
+    assertThat(joined(r)).contains("then commit, push, and run:");
+    assertThat(joined(r)).doesNotContain("applied the edits");
+    assertThat(lifecycle("refs/heads/feature/edit").syncState)
+        .isEqualTo(Lifecycle.SyncState.DIVERGED);
+
+    // develop route (on): the edit lands on the source branch as one commit.
+    editInGerrit(dev, "a/file1.txt", "edited on develop route\n");
+    waitFor(() -> !refValue("refs/heads/dev/edit").equals(devStart));
+    ObjectId tip = refValue("refs/heads/dev/edit");
+    assertThat(fileAt(tip, "a/file1.txt")).isEqualTo("edited on develop route\n");
+    assertThat(between(devStart, tip)).hasSize(1);
+  }
+
+  @Test
+  public void routeOverrideDisablesEditTransferWhenTheProjectDefaultIsOn() throws Exception {
+    setConfig(EDITS_OFF_FOR_RUNTIME);
+    ObjectId runStart = pushFrom(runTip, "refs/heads/run/edit", "a");
+    int run = lifecycle("refs/heads/run/edit").changeNumber;
+    editInGerrit(run, "a/file1.txt", "edited on runtime route\n");
+    // The push from the old tip succeeding proves nothing wrote the branch.
+    PushResult r = pushOnTop("refs/heads/run/edit", runStart, "b");
+    assertThat(joined(r)).contains("was not produced by branch-review");
+    // The disabled path: never written back, resumed only by an explicit accept-divergence.
+    assertThat(joined(r)).contains("then commit, push, and run:");
+    assertThat(joined(r)).doesNotContain("applied the edits");
+    assertThat(fileAt(refValue("refs/heads/run/edit"), "a/file1.txt")).isEqualTo("a content 1\n");
+    // Recovery must not pick it up either.
+    assertThat(
+            plugin
+                .getSysInjector()
+                .getInstance(
+                    io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class)
+                .runOnce())
+        .isEqualTo(0);
+  }
+
+  @Test
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.threads",
+      value = "1")
+  @com.google.gerrit.acceptance.config.GerritConfig(
+      name = "plugin.branch-review.maxQueued",
+      value = "1")
+  public void recoveryFollowsTheRouteEditSetting() throws Exception {
+    setConfig(EDITS_ROUTED);
+    ObjectId devStart = pushFrom(devTip, "refs/heads/dev/lost", "a");
+    ObjectId mainStart = pushFrom(refValue("refs/heads/master"), "refs/heads/feature/lost", "b");
+    int dev = lifecycle("refs/heads/dev/lost").changeNumber;
+    int main = lifecycle("refs/heads/feature/lost").changeNumber;
+    var executor =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    assertThat(
+            executor.execute(
+                () -> {
+                  try {
+                    release.await();
+                  } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                  }
+                }))
+        .isTrue();
+    try {
+      // Both edit events are dropped (queue full).
+      editInGerrit(dev, "a/file1.txt", "lost dev edit\n");
+      editInGerrit(main, "b/file1.txt", "lost master edit\n");
+    } finally {
+      release.countDown();
+    }
+    waitFor(() -> executor.execute(() -> {}));
+    var recovery =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class);
+    // Only the develop route (on) has recovery work.
+    assertThat(recovery.runOnce()).isEqualTo(1);
+    waitFor(() -> !refValue("refs/heads/dev/lost").equals(devStart));
+    waitFor(
+        () ->
+            refValue("refs/heads/dev/lost")
+                .name()
+                .equals(lifecycle("refs/heads/dev/lost").lastSourceId));
+    assertThat(fileAt(refValue("refs/heads/dev/lost"), "a/file1.txt")).isEqualTo("lost dev edit\n");
+    assertThat(refValue("refs/heads/feature/lost")).isEqualTo(mainStart);
+  }
+
   @Test
   public void reroutingAnActiveBranchBlocksIt() throws Exception {
     pushFrom(devTip, "refs/heads/dev/move", "a");
