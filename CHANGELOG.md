@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.3.0...v0.4.0) (2026-10-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** a branch-review.config with enabled = true in a parent project (All-Projects included), previously ignored, now enables the plugin for all its descendants. Children opt out with enabled = false. Config updates naming a missing target branch are no longer rejected.
+
+### Features
+
+* **config:** inherit branch-review.config from parent projects ([f232055](https://github.com/QuentinBtd/gerrit-branch-review/commit/f2320551d9a13f236bddf85816dfd01eeeaad98f))
+* **config:** inherit branch-review.config from parent projects ([9f830c3](https://github.com/QuentinBtd/gerrit-branch-review/commit/9f830c33a572a771ca43b228b4bd9c82540e3251))
+
 ## [0.3.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.2.1...v0.3.0) (2026-10-23)
 
 
