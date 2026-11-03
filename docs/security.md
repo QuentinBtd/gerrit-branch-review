@@ -44,9 +44,21 @@
   Publication evidence is stored in `refs/meta/branch-review/publications/*`, under the existing
   user-write protection, in the same atomic project ref transaction as the NoteDb message.
   Copying, modifying or deleting a public tag does not advance or remove that protected evidence;
-  no secret, additional user privilege or manual configuration is required.
+  no secret, additional user privilege or manual configuration is required. Each publication ref
+  points to an independently inserted metadata commit with an empty tree and zero parents.
+  It contains only canonical schema, Change, lifecycle and source-OID text; it never links to
+  the original source commit, trees, blobs or ancestors. Broad namespace READ can therefore
+  fetch the marker but does not gain a source-history root through it, even if the Change later
+  becomes private. This does not hide source identities: source OIDs are already in ref names
+  and state metadata. It also does not override Gerrit's existing source-ref/object-fetch policy.
+  Markers do not retain old source objects against GC; missing selection history fails closed.
+  Setting project-wide `publishCommitMessages = false` skips new source discussion and evidence
+  without disabling synchronization or removing existing messages/refs. It does not hide the
+  branch names and abbreviated source ids already used in synthetic Change text.
 - `refs/meta/branch-review/*` is readable by whoever has READ on it (by default READ on
-  `refs/*`). Sites that hide branches should add, in All-Projects:
+  `refs/*`). This can disclose branch names, source OIDs, lifecycle state and Change identifiers
+  independently of Change privacy. To hide those metadata, sites may add, in All-Projects
+  (not a prerequisite for protecting raw history with the metadata-only publication format):
 
   ```ini
   [access "refs/meta/branch-review/*"]

@@ -22,8 +22,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.TreeFormatter;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 
 /** A normal NoteDb discussion update, without a fake patch set or review/vote mutations. */
 @Singleton
@@ -53,12 +58,19 @@ class SourceCommentPublisher {
           public void updateRepo(RepoContext ctx) throws IOException {
             var existing = ctx.getRepoView().getRef(ref);
             if (existing.isPresent()) {
-              if (!existing.get().equals(source)) {
-                throw new IOException("invalid source publication ref: " + ref);
-              }
+              validatePublication(ctx.getRevWalk(), existing.get(), ref, change, lifecycle, source);
               return;
             }
-            ctx.addRefUpdate(ObjectId.zeroId(), source, ref);
+            // Textual source OIDs are not Git links. Never attach a source tree or parent:
+            // namespace READ must not become authorization to fetch raw source history.
+            var commit = new CommitBuilder();
+            commit.setTreeId(ctx.getInserter().insert(new TreeFormatter()));
+            var ident = ctx.newCommitterIdent();
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(publicationMessage(change, lifecycle, source));
+            var evidence = ctx.getInserter().insert(commit);
+            ctx.addRefUpdate(ObjectId.zeroId(), evidence, ref);
           }
         });
   }
@@ -67,14 +79,53 @@ class SourceCommentPublisher {
       throws IOException {
     String prefix = publicationPrefix(change, lifecycle);
     var heads = new ArrayList<ObjectId>();
-    for (var ref : repo.getRefDatabase().getRefsByPrefix(prefix)) {
-      String head = ref.getName().substring(prefix.length());
-      if (ref.isSymbolic() || !ObjectId.isId(head) || !head.equals(ref.getObjectId().name())) {
-        throw new IOException("invalid source publication ref: " + ref.getName());
+    try (var rw = new RevWalk(repo)) {
+      for (var ref : repo.getRefDatabase().getRefsByPrefix(prefix)) {
+        String head = ref.getName().substring(prefix.length());
+        if (ref.isSymbolic() || !ObjectId.isId(head)) {
+          throw new IOException("invalid source publication ref: " + ref.getName());
+        }
+        ObjectId source = ObjectId.fromString(head);
+        if (!head.equals(source.name())) {
+          throw new IOException("invalid source publication ref: " + ref.getName());
+        }
+        validatePublication(rw, ref.getObjectId(), ref.getName(), change, lifecycle, source);
+        heads.add(source);
       }
-      heads.add(ref.getObjectId());
     }
     return List.copyOf(heads);
+  }
+
+  private static String publicationMessage(Change.Id change, String lifecycle, ObjectId source) {
+    return "branch-review publication v1\n"
+        + "change "
+        + change.get()
+        + "\n"
+        + "lifecycle "
+        + lifecycle
+        + "\n"
+        + "source "
+        + source.name()
+        + "\n";
+  }
+
+  private static void validatePublication(
+      RevWalk rw,
+      ObjectId evidence,
+      String ref,
+      Change.Id change,
+      String lifecycle,
+      ObjectId source)
+      throws IOException {
+    // parseAny deliberately does not peel tags: only the metadata commit itself is evidence.
+    var object = rw.parseAny(evidence);
+    if (!(object instanceof RevCommit commit)
+        || commit.getParentCount() != 0
+        || !commit.getTree().equals(Constants.EMPTY_TREE_ID)
+        || !commit.getFullMessage().equals(publicationMessage(change, lifecycle, source))) {
+      throw new IOException("invalid source publication ref: " + ref);
+    }
+    rw.parseTree(commit.getTree());
   }
 
   private static String publicationPrefix(Change.Id change, String lifecycle) {

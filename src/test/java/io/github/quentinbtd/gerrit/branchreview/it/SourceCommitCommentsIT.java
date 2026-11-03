@@ -31,6 +31,205 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
   @Inject private ExtensionRegistry extensionRegistry;
 
   @Test
+  public void readablePublicationDoesNotExposeHiddenSourceHistory() throws Exception {
+    publicationVisibilityDoesNotExposeHistory(false);
+  }
+
+  @Test
+  public void deniedPublicationNamespaceDoesNotExposeHiddenSourceHistory() throws Exception {
+    publicationVisibilityDoesNotExposeHistory(true);
+  }
+
+  private void publicationVisibilityDoesNotExposeHistory(boolean denyNamespace) throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var secret =
+        repo.branch("HEAD")
+            .commit()
+            .author(user.newIdent())
+            .committer(user.newIdent())
+            .message("Intermediate work")
+            .add("confidential.txt", "CONFIDENTIAL intermediate content")
+            .create();
+    var head =
+        repo.branch("HEAD")
+            .commit()
+            .author(user.newIdent())
+            .committer(user.newIdent())
+            .message("Final public contribution")
+            .rm("confidential.txt")
+            .add("public.txt", "public final content")
+            .create();
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    assertThat(
+            fileAt(
+                org.eclipse.jgit.lib.ObjectId.fromString(change(n).currentRevision),
+                "confidential.txt"))
+        .isNull();
+    org.eclipse.jgit.lib.ObjectId blob;
+    try (var tree =
+        org.eclipse.jgit.treewalk.TreeWalk.forPath(
+            repo.getRepository(), "confidential.txt", secret.getTree())) {
+      blob = tree.getObjectId(0);
+    }
+    var reader =
+        accountCreator.create("history-reader", "history-reader@example.org", "Reader", null);
+    var group = gApi.groups().create("history-readers");
+    group.addMembers(reader.username());
+    var uuid = com.google.gerrit.entities.AccountGroup.uuid(group.get().id);
+    var acl =
+        projectOperations
+            .project(project)
+            .forUpdate()
+            .add(
+                com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow(
+                        com.google.gerrit.entities.Permission.READ)
+                    .ref("refs/*")
+                    .group(uuid))
+            .add(
+                com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block(
+                        com.google.gerrit.entities.Permission.READ)
+                    .ref(FEATURE)
+                    .group(uuid));
+    if (denyNamespace) {
+      acl.add(
+          com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block(
+                  com.google.gerrit.entities.Permission.READ)
+              .ref("refs/meta/branch-review/*")
+              .group(uuid));
+    }
+    acl.update();
+    assertThat(
+            forgeryPermissions
+                .absentUser(reader.id())
+                .project(project)
+                .ref(FEATURE)
+                .test(com.google.gerrit.server.permissions.RefPermission.READ))
+        .isFalse();
+    assertThat(
+            forgeryPermissions
+                .absentUser(reader.id())
+                .change(
+                    forgeryNotes.createChecked(project, com.google.gerrit.entities.Change.id(n)))
+                .test(com.google.gerrit.server.permissions.ChangePermission.READ))
+        .isTrue();
+    String marker = publicationPrefix(n) + head.name();
+    // cloneAs/fetch use Gerrit's real InProcessProtocol Upload factory, which wraps the
+    // repository in PermissionAwareRepositoryManager before constructing UploadPack.
+    for (boolean privateChange : List.of(false, true)) {
+      if (privateChange) {
+        gApi.changes().id(project.get(), n).setPrivate(true);
+        assertThat(
+                forgeryPermissions
+                    .absentUser(reader.id())
+                    .change(
+                        forgeryNotes.createChecked(
+                            project, com.google.gerrit.entities.Change.id(n)))
+                    .test(com.google.gerrit.server.permissions.ChangePermission.READ))
+            .isFalse();
+      }
+      var client = cloneAs(reader);
+      var advertised = client.git().lsRemote().setRemote("origin").call();
+      assertThat(advertised.stream().anyMatch(r -> r.getName().equals(FEATURE))).isFalse();
+      assertThat(advertised.stream().anyMatch(r -> r.getName().equals(marker)))
+          .isEqualTo(!denyNamespace);
+      client
+          .git()
+          .fetch()
+          .setRemote("origin")
+          .setRefSpecs(
+              new org.eclipse.jgit.transport.RefSpec(
+                  "+refs/meta/branch-review/publications/*:refs/received/*"))
+          .call();
+      // A fresh receiving object database, not just raw server reachability.
+      assertThat(client.getRepository().getObjectDatabase().has(blob)).isFalse();
+      assertThat(client.getRepository().getObjectDatabase().has(secret)).isFalse();
+      assertThat(client.getRepository().getObjectDatabase().has(head)).isFalse();
+      if (!denyNamespace) {
+        var received =
+            client
+                .getRepository()
+                .resolve("refs/received/" + n + "/" + lifecycle(FEATURE).id + "/" + head.name());
+        assertThat(received).isEqualTo(refValue(marker));
+        var metadata = client.getRevWalk().parseCommit(received);
+        assertThat(metadata.getParentCount()).isEqualTo(0);
+        assertThat(metadata.getTree().name()).isEqualTo("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+      }
+    }
+  }
+
+  @Test
+  public void malformedPublicationMetadataFailsClosed() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var a = commit(repo, "A", "already published");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    String ref = publicationPrefix(n) + a.name();
+    var original = refValue(ref);
+    var b = commit(repo, "B", "must wait for valid evidence");
+    // Stage B without running synchronization for this lifecycle.
+    assertOk(push(repo, "refs/heads/feature/private/staged"), "refs/heads/feature/private/staged");
+    serverCommit(FEATURE, "B.txt", "B");
+    try (var r = repoManager.openRepository(project);
+        var rw = new org.eclipse.jgit.revwalk.RevWalk(r);
+        var inserter = r.newObjectInserter();
+        var context =
+            com.google.gerrit.server.update.context.RefUpdateContext.open(
+                com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.PLUGIN)) {
+      var valid = rw.parseCommit(original);
+      var badObjects = new java.util.ArrayList<org.eclipse.jgit.lib.ObjectId>();
+      badObjects.add(a); // Legacy source-history roots are not accepted as metadata.
+      badObjects.add(inserter.insert(org.eclipse.jgit.lib.Constants.OBJ_BLOB, new byte[0]));
+      for (int kind = 0; kind < 7; kind++) {
+        var metadata = new org.eclipse.jgit.lib.CommitBuilder();
+        metadata.setAuthor(user.newIdent());
+        metadata.setCommitter(user.newIdent());
+        metadata.setTreeId(kind == 0 ? a.getTree() : valid.getTree());
+        if (kind == 1) {
+          metadata.setParentId(a);
+        }
+        String message = valid.getFullMessage();
+        if (kind == 2) message = message.replace("publication v1", "publication v2");
+        if (kind == 3) message = message.replace("change " + n, "change " + (n + 1));
+        if (kind == 4) message = message.replace(lifecycle(FEATURE).id, "wrong-lifecycle");
+        if (kind == 5) message = message.replace(a.name(), b.name());
+        if (kind == 6) message += "unrecognized field\n";
+        metadata.setMessage(message);
+        badObjects.add(inserter.insert(metadata));
+      }
+      var tag = new org.eclipse.jgit.lib.TagBuilder();
+      tag.setObjectId(original, org.eclipse.jgit.lib.Constants.OBJ_COMMIT);
+      tag.setTag("not-direct-metadata");
+      tag.setTagger(user.newIdent());
+      tag.setMessage("not publication evidence");
+      badObjects.add(inserter.insert(tag));
+      inserter.flush();
+      for (var invalid : badObjects) {
+        var update = r.updateRef(ref);
+        update.setNewObjectId(invalid);
+        update.setForceUpdate(true);
+        assertThat(update.update())
+            .isAnyOf(
+                org.eclipse.jgit.lib.RefUpdate.Result.FORCED,
+                org.eclipse.jgit.lib.RefUpdate.Result.NEW);
+        syncViaRest(user, FEATURE, new PostSync.Input());
+        assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.FAILED);
+        assertThat(comments(n)).hasSize(1);
+        assertThat(change(n).revisions).hasSize(1);
+      }
+      var restore = r.updateRef(ref);
+      restore.setNewObjectId(original);
+      restore.setForceUpdate(true);
+      restore.update();
+    }
+    syncViaRest(user, FEATURE, new PostSync.Input());
+    assertThat(comments(n)).hasSize(2);
+    assertThat(change(n).revisions).hasSize(2);
+  }
+
+  @Test
   public void readerMissingHeadTagCannotBlockSynchronization() throws Exception {
     forgedTagCannotAffectSynchronization(false, false);
   }
@@ -177,7 +376,27 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
             com.google.gerrit.entities.Change.id(number));
     assertThat(batches.stream().anyMatch(b -> b.contains(publication) && b.contains(meta)))
         .isTrue();
-    assertThat(refValue(publication)).isEqualTo(source);
+    assertPublicationMetadata(publication, number, source);
+  }
+
+  private void assertPublicationMetadata(String ref, int number, RevCommit source)
+      throws Exception {
+    try (var repo = repoManager.openRepository(project);
+        var rw = new org.eclipse.jgit.revwalk.RevWalk(repo)) {
+      var evidence = rw.parseCommit(refValue(ref));
+      assertThat(evidence).isNotEqualTo(source);
+      assertThat(evidence.getParentCount()).isEqualTo(0);
+      assertThat(evidence.getTree()).isEqualTo(org.eclipse.jgit.lib.Constants.EMPTY_TREE_ID);
+      assertThat(evidence.getFullMessage())
+          .isEqualTo(
+              "branch-review publication v1\nchange "
+                  + number
+                  + "\nlifecycle "
+                  + lifecycle(FEATURE).id
+                  + "\nsource "
+                  + source.name()
+                  + "\n");
+    }
   }
 
   @Test
@@ -188,7 +407,8 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
     assertOk(push(repo, FEATURE), FEATURE);
     int n = onlyChange();
     String evidence = publicationPrefix(n) + a.name();
-    assertThat(refValue(evidence)).isEqualTo(a);
+    assertPublicationMetadata(evidence, n, a);
+    var originalEvidence = refValue(evidence);
     var b = commit(repo, "B", "unpublished source");
     projectOperations
         .project(project)
@@ -217,7 +437,7 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
             .isNotEqualTo(org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK);
       }
     }
-    assertThat(refValue(evidence)).isEqualTo(a);
+    assertThat(refValue(evidence)).isEqualTo(originalEvidence);
     assertThat(refValue(publicationPrefix(n) + b.name())).isNull();
     assertThat(comments(n)).hasSize(1);
   }

@@ -135,8 +135,14 @@ possible.
 
 Idempotency does not depend on a marker saved *after* posting. Each publication creates an
 immutable `refs/meta/branch-review/publications/<change-number>/<lifecycle-id>/<full-source-SHA>`
-ref pointing to that source commit. The ref is added through the **same project BatchUpdate**
-as the discussion message and NoteDb update. Gerrit combines these commands in one atomic
+ref pointing to an independent metadata-only commit: schema `branch-review publication v1`,
+Change number, lifecycle id and full source SHA in canonical text. The commit has the empty
+Git tree and **zero parents**, not the source tree or any source-history parent. Source OIDs
+in text and ref names are identifiers, not Git reachability links. Readers validate the direct
+commit type (no tag peeling), exact schema/fields, empty tree, zero parents and name-to-source
+binding before using the stored source OID for selection; malformed evidence fails closed.
+The ref is added through the **same project BatchUpdate** as the discussion message and NoteDb
+update. Gerrit combines these commands in one atomic
 project BatchRefUpdate; there is no cross-repository transaction or later evidence write.
 Insertion rejection leaves neither message nor publication ref. Repositories unable to apply
 atomic ref transactions fail rather than partially publish.
@@ -162,14 +168,28 @@ emoji ZWJ sequences) retained, and Gerrit account-template tokens are neutralize
 a space after `<`. Original source commits are not modified.
 
 Operational boundaries: this is persisted-message idempotency on the supported single primary,
-not exactly-once email/event delivery. Publication refs retain source history across branch
-rewrites and ordinary Git GC. They accumulate one ref per published batch and are not deleted
-automatically when a branch or Change closes; storage/backup policies must account for that
-retention. Back up and restore publication refs together with NoteDb and lifecycle state.
-Administrators with direct repository access can still tamper with protected evidence or source
-objects. Inconsistent backups, manual removal or corruption can cause replay or fail-closed
-synchronization; no public-tag fallback is used. A pre-upgrade last synchronized source without
-a publication ref still requires its Git objects to be available.
+not exactly-once email/event delivery. Publication refs retain only their metadata and empty
+Git tree; they **do not retain source objects or histories** across branch rewrites or GC.
+They accumulate one ref per published batch and are not deleted automatically when a branch or
+Change closes. Back up and restore publication refs together with NoteDb and lifecycle state;
+a complete recovery backup must separately preserve any source objects required for selection,
+under the source repository's existing access controls. Both new and pre-upgrade watermarks
+require the referenced source commits and their selection history to remain available. If an
+old rewritten source object is missing or pruned, synchronization fails closed rather than
+replaying uncertain history; this is an availability limit, not a reason to expose history
+through the publication namespace. Administrators with direct repository access can still
+tamper with evidence or source objects. Inconsistent backups, manual removal or corruption
+can cause replay or fail-closed synchronization; no public-tag fallback is used. Earlier
+unreleased source-pointing publication refs are not a supported metadata format and are
+rejected, not silently trusted or automatically rewritten. This change does not remove an
+already exposed ref or revoke objects previously fetched from such a build.
+
+The project-wide, inherited `publishCommitMessages` switch defaults to `true`. When `false`,
+new source discussion and publication refs are skipped before reading any discussion markers
+or selecting source messages. Squash/patch-set updates, other Gerrit messages and lifecycle
+completion still run; equivalent/no-op and existing-Change `EMPTY` paths also advance the source
+baseline. Existing discussion/evidence is kept. Re-enabling publishes only fresh commits beyond
+that baseline, never automatic catch-up of already synchronized disabled-period commits.
 
 ## Edits made in Gerrit
 

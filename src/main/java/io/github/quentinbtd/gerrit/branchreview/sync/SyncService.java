@@ -539,7 +539,7 @@ public class SyncService {
 
     // New Changes start WIP unless the route or project sets workInProgress = false.
     boolean wip = cfg.workInProgress(sourceRef);
-    String sourceMessages = sourceMessages(repo, lc, null, plan);
+    String sourceMessages = sourceMessages(repo, cfg, lc, null, plan);
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
         RefUpdateContext pluginCtx = RefUpdateContext.open(RefUpdateType.PLUGIN);
         BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
@@ -797,7 +797,11 @@ public class SyncService {
     if (!plan.ok()) {
       if (plan.outcome() == SquashPlanner.Outcome.EMPTY) {
         // The Change stays stale/Submit-blocked, but fresh source messages remain visible.
-        publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
+        publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
+        if (!cfg.publishCommitMessages()) {
+          // Deliberately skipped discussion must not be caught up on re-enabling.
+          lc.lastSourceId = sourceId.name();
+        }
       }
       lc.syncState =
           switch (plan.outcome()) {
@@ -830,7 +834,7 @@ public class SyncService {
         && currentCommit.getParentCount() == 1
         && currentCommit.getParent(0).equals(plan.targetId())
         && !opts.resetText()) {
-      publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
+      publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
       lc.lastSourceId = sourceId.name();
       lc.observedSourceId = sourceId.name();
       lc.lastTargetId = plan.targetId().name();
@@ -879,7 +883,7 @@ public class SyncService {
     }
     ins.flush();
     if (commit.equals(current.commitId())) {
-      publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
+      publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
       lc.lastSourceId = sourceId.name();
       lc.observedSourceId = sourceId.name();
       lc.syncState = SyncState.SYNCED;
@@ -893,7 +897,7 @@ public class SyncService {
     }
 
     PatchSet.Id psId = ChangeUtil.nextPatchSetId(repo, current.id());
-    String sourceMessages = sourceMessages(repo, lc, notes, plan);
+    String sourceMessages = sourceMessages(repo, cfg, lc, notes, plan);
     lc.pending = pending("patchset", lc.changeNumber, psId.get(), commit, plan, text.state());
     lc.syncState = SyncState.PENDING;
     lc.observedSourceId = sourceId.name();
@@ -932,12 +936,13 @@ public class SyncService {
       ObjectInserter ins,
       RevWalk rw,
       Project.NameKey project,
+      BranchReviewConfig cfg,
       Lifecycle lc,
       ChangeNotes notes,
       SquashPlanner.Plan plan,
       IdentifiedUser user)
       throws IOException {
-    String message = sourceMessages(repo, lc, notes, plan);
+    String message = sourceMessages(repo, cfg, lc, notes, plan);
     if (message.isEmpty()) {
       return;
     }
@@ -960,8 +965,16 @@ public class SyncService {
   }
 
   private String sourceMessages(
-      Repository repo, Lifecycle lc, ChangeNotes notes, SquashPlanner.Plan plan)
+      Repository repo,
+      BranchReviewConfig cfg,
+      Lifecycle lc,
+      ChangeNotes notes,
+      SquashPlanner.Plan plan)
       throws IOException {
+    if (!cfg.publishCommitMessages()) {
+      // Do not read/validate markers or traverse discussion-selection history when disabled.
+      return "";
+    }
     List<ObjectId> published = new ArrayList<>();
     if (notes != null) {
       published.addAll(SourceCommentPublisher.publishedHeads(repo, notes.getChangeId(), lc.id));

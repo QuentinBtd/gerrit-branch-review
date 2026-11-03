@@ -30,6 +30,8 @@ public record BranchReviewConfig(
     boolean syncEditsToBranch,
     /** Whether new Changes start Work in Progress (default for every route). */
     boolean workInProgress,
+    /** Whether to publish new source commit discussion messages (project-wide, default true). */
+    boolean publishCommitMessages,
     ImmutableList<String> errors) {
 
   /** Namespace that holds plugin state; never eligible and never writable by users. */
@@ -62,6 +64,7 @@ public record BranchReviewConfig(
         false,
         false,
         true,
+        true,
         ImmutableList.of());
   }
 
@@ -74,6 +77,7 @@ public record BranchReviewConfig(
         ImmutableList.of(),
         false,
         false,
+        true,
         true,
         errors);
   }
