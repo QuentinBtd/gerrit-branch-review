@@ -66,6 +66,7 @@ import io.github.quentinbtd.gerrit.branchreview.state.StateStore.ConcurrentUpdat
 import io.github.quentinbtd.gerrit.branchreview.state.StateStore.Loaded;
 import io.github.quentinbtd.gerrit.branchreview.text.CommitMessage;
 import io.github.quentinbtd.gerrit.branchreview.text.MessageGenerator;
+import io.github.quentinbtd.gerrit.branchreview.text.SourceCommitMessages;
 import io.github.quentinbtd.gerrit.branchreview.text.TextOwnership;
 import java.io.IOException;
 import java.time.Instant;
@@ -151,6 +152,7 @@ public class SyncService {
   private final CommitValidators.Factory commitValidatorsFactory;
   private final RefOperationValidators.Factory refValidatorsFactory;
   private final DiffOperationsForCommitValidation.Factory diffOperationsFactory;
+  private final SourceCommentPublisher sourceCommentPublisher;
   private final Striped<Lock> locks = Striped.lazyWeakLock(1024);
 
   @Inject
@@ -173,7 +175,9 @@ public class SyncService {
       GitReferenceUpdated gitRefUpdated,
       CommitValidators.Factory commitValidatorsFactory,
       RefOperationValidators.Factory refValidatorsFactory,
-      DiffOperationsForCommitValidation.Factory diffOperationsFactory) {
+      DiffOperationsForCommitValidation.Factory diffOperationsFactory,
+      SourceCommentPublisher sourceCommentPublisher) {
+    this.sourceCommentPublisher = sourceCommentPublisher;
     this.commitValidatorsFactory = commitValidatorsFactory;
     this.refValidatorsFactory = refValidatorsFactory;
     this.diffOperationsFactory = diffOperationsFactory;
@@ -535,7 +539,9 @@ public class SyncService {
 
     // New Changes start WIP unless the route or project sets workInProgress = false.
     boolean wip = cfg.workInProgress(sourceRef);
+    String sourceMessages = sourceMessages(repo, lc, null, plan);
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
+        RefUpdateContext pluginCtx = RefUpdateContext.open(RefUpdateType.PLUGIN);
         BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
       bu.setRepository(repo, rw, ins);
       ChangeInserter ci =
@@ -543,8 +549,12 @@ public class SyncService {
               .create(Change.id(number), commit, target)
               .setWorkInProgress(wip)
               .setPatchSetDescription(describe(sourceRef, plan))
-              .setMessage("Uploaded patch set 1: synchronized from branch (branch-review).");
+              .setMessage(
+                  "Uploaded patch set 1: synchronized from branch (branch-review)."
+                      + sourceMessages);
       bu.insertChange(ci);
+      tagSourceMessages(
+          bu, Change.id(number), PatchSet.id(Change.id(number), 1), lc, plan, sourceMessages);
       bu.execute();
     } catch (RestApiException | UpdateException e) {
       return afterInsertFailure(repo, project, lc, stateId, e);
@@ -785,6 +795,10 @@ public class SyncService {
             targetRef.getObjectId(),
             new SquashPlanner.Limits(settings.maxCommits()));
     if (!plan.ok()) {
+      if (plan.outcome() == SquashPlanner.Outcome.EMPTY) {
+        // The Change stays stale/Submit-blocked, but fresh source messages remain visible.
+        publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
+      }
       lc.syncState =
           switch (plan.outcome()) {
             case EMPTY -> SyncState.EMPTY;
@@ -816,6 +830,7 @@ public class SyncService {
         && currentCommit.getParentCount() == 1
         && currentCommit.getParent(0).equals(plan.targetId())
         && !opts.resetText()) {
+      publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
       lc.lastSourceId = sourceId.name();
       lc.observedSourceId = sourceId.name();
       lc.lastTargetId = plan.targetId().name();
@@ -864,6 +879,7 @@ public class SyncService {
     }
     ins.flush();
     if (commit.equals(current.commitId())) {
+      publishCommentOnly(repo, ins, rw, project, lc, notes, plan, user);
       lc.lastSourceId = sourceId.name();
       lc.observedSourceId = sourceId.name();
       lc.syncState = SyncState.SYNCED;
@@ -877,12 +893,14 @@ public class SyncService {
     }
 
     PatchSet.Id psId = ChangeUtil.nextPatchSetId(repo, current.id());
+    String sourceMessages = sourceMessages(repo, lc, notes, plan);
     lc.pending = pending("patchset", lc.changeNumber, psId.get(), commit, plan, text.state());
     lc.syncState = SyncState.PENDING;
     lc.observedSourceId = sourceId.name();
     stateId = store.saveLifecycle(repo, project, lc, stateId, "reserve patch set " + psId.get());
 
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
+        RefUpdateContext pluginCtx = RefUpdateContext.open(RefUpdateType.PLUGIN);
         BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
       bu.setRepository(repo, rw, ins);
       bu.addOp(
@@ -895,8 +913,10 @@ public class SyncService {
               .setMessage(
                   "Uploaded patch set "
                       + psId.get()
-                      + ": synchronized from branch (branch-review).");
+                      + ": synchronized from branch (branch-review)."
+                      + sourceMessages);
       bu.addOp(notes.getChangeId(), psi);
+      tagSourceMessages(bu, notes.getChangeId(), psId, lc, plan, sourceMessages);
       bu.execute();
     } catch (RestApiException | UpdateException e) {
       return afterInsertFailure(repo, project, lc, stateId, e);
@@ -905,6 +925,79 @@ public class SyncService {
     store.saveLifecycle(repo, project, lc, stateId, "patch set " + psId.get());
     ChangeNotes after = notesFactory.createChecked(project, notes.getChangeId());
     return result(SyncResult.Kind.UPDATED, project, lc, after.getChange().isWorkInProgress());
+  }
+
+  private void publishCommentOnly(
+      Repository repo,
+      ObjectInserter ins,
+      RevWalk rw,
+      Project.NameKey project,
+      Lifecycle lc,
+      ChangeNotes notes,
+      SquashPlanner.Plan plan,
+      IdentifiedUser user)
+      throws IOException {
+    String message = sourceMessages(repo, lc, notes, plan);
+    if (message.isEmpty()) {
+      return;
+    }
+    try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.CHANGE_MODIFICATION);
+        RefUpdateContext pluginCtx = RefUpdateContext.open(RefUpdateType.PLUGIN);
+        BatchUpdate bu = batchUpdateFactory.create(project, user, TimeUtil.now())) {
+      bu.setRepository(repo, rw, ins);
+      bu.addOp(
+          notes.getChangeId(),
+          new ExpectCurrentPatchSet(notes.getCurrentPatchSet().id(), notes.getChange().getDest()));
+      sourceCommentPublisher.add(
+          bu, notes, message.strip(), SourceCommitMessages.tag(lc.id, plan.sourceId()));
+      SourceCommentPublisher.recordPublication(bu, notes.getChangeId(), lc.id, plan.sourceId());
+      bu.execute();
+    } catch (RestApiException | UpdateException e) {
+      // Do not advance lastSourceId. A retry reconciles the atomic message/tag in NoteDb,
+      // including failures after commit (e.g. indexing), before trying to publish again.
+      throw new IOException("cannot publish source commit messages", e);
+    }
+  }
+
+  private String sourceMessages(
+      Repository repo, Lifecycle lc, ChangeNotes notes, SquashPlanner.Plan plan)
+      throws IOException {
+    List<ObjectId> published = new ArrayList<>();
+    if (notes != null) {
+      published.addAll(SourceCommentPublisher.publishedHeads(repo, notes.getChangeId(), lc.id));
+      // Upgrade compatibility: do not replay the pre-feature synchronized history.
+      if (lc.lastSourceId != null) {
+        published.add(ObjectId.fromString(lc.lastSourceId));
+      }
+    }
+    String rendered =
+        SourceCommitMessages.render(
+            SourceCommitMessages.select(
+                repo, plan.sourceId(), plan.targetId(), published, settings.maxCommits()));
+    return rendered.isEmpty() ? "" : "\n\n" + rendered;
+  }
+
+  private static void tagSourceMessages(
+      BatchUpdate bu,
+      Change.Id change,
+      PatchSet.Id ps,
+      Lifecycle lc,
+      SquashPlanner.Plan plan,
+      String messages) {
+    if (!messages.isEmpty()) {
+      SourceCommentPublisher.recordPublication(bu, change, lc.id, plan.sourceId());
+      String tag = SourceCommitMessages.tag(lc.id, plan.sourceId());
+      bu.addOp(
+          change,
+          new BatchUpdateOp() {
+            @Override
+            public boolean updateChange(ChangeContext ctx) {
+              // The inserter's message and watermark are in the SAME NoteDb update.
+              ctx.getUpdate(ps).setTag(tag);
+              return true;
+            }
+          });
+    }
   }
 
   /**

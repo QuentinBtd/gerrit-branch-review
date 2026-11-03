@@ -36,6 +36,15 @@
   source commit ids. If a project hides some branches from people who can see the target
   branch's Changes, those names become visible on the Change. Avoid enabling such branches as
   sources, or exclude them with `excludeBranchPattern`.
+- Source commit subjects and full bodies (including original trailers, subject to documented
+  truncation) are also published as Change discussion messages. These follow the **Change's**
+  visibility and notification policy, not a separate source-branch READ check for each reader.
+  Do not enable sources whose commit messages must remain hidden from those readers. Public
+  discussion tags are not trusted as watermarks, including tags posted by the original pusher.
+  Publication evidence is stored in `refs/meta/branch-review/publications/*`, under the existing
+  user-write protection, in the same atomic project ref transaction as the NoteDb message.
+  Copying, modifying or deleting a public tag does not advance or remove that protected evidence;
+  no secret, additional user privilege or manual configuration is required.
 - `refs/meta/branch-review/*` is readable by whoever has READ on it (by default READ on
   `refs/*`). Sites that hide branches should add, in All-Projects:
 

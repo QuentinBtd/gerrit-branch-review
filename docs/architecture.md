@@ -107,6 +107,70 @@ tree). Unpublished change edits are not touched; Gerrit keeps them on their base
 WIP/Ready state, reviewers, votes (subject to Gerrit's copy rules), topic, hashtags, attention
 set and privacy are never modified by synchronization.
 
+## Source commit discussion messages
+
+Synchronization also publishes a grouped **Change discussion message**, independent of the
+synthetic commit description and its subject/body ownership. The first successful creation
+includes the non-merge contribution (`target..source`); subsequent synchronizations include
+only previously unpublished reachable source commits, in deterministic reverse-topological
+(oldest/parents first) order. Each entry shows a 12-digit SHA, subject and complete body,
+including trailers. No author or timestamp is invented: Gerrit attributes the discussion
+message to the synchronization actor, at publication time. Merge commits are excluded, but
+non-merge commits reached through either parent are included.
+
+For new Changes and patch sets, this text extends the existing upload notification, in the
+**same BatchUpdate and NoteDb update** as insertion. The message has a stable machine tag
+`branch-review:source-commits:v1:<lifecycle-id>:<full-source-SHA>`. Recovery adopts the reserved
+insertion with its discussion message; a rejected insertion leaves neither. The existing
+WIP/Ready, notification and revision-created behavior is retained.
+
+A fresh source commit with the same effective tree/base (including a message-only amend)
+adds a comment-only NoteDb update, not a fake patch set or a description edit. This uses normal
+Gerrit attribution, review-email delivery and the comment-added event, without voting, changing
+reviewers or publishing drafts. A source contribution that becomes empty can also publish
+messages on its existing Change, but remains `EMPTY` and Submit-blocked. An initially empty
+branch still creates no Change, so there is nowhere to post a discussion message. Conflicting,
+unrelated, over-limit or permission-blocked work is not published until synchronization is
+possible.
+
+Idempotency does not depend on a marker saved *after* posting. Each publication creates an
+immutable `refs/meta/branch-review/publications/<change-number>/<lifecycle-id>/<full-source-SHA>`
+ref pointing to that source commit. The ref is added through the **same project BatchUpdate**
+as the discussion message and NoteDb update. Gerrit combines these commands in one atomic
+project BatchRefUpdate; there is no cross-repository transaction or later evidence write.
+Insertion rejection leaves neither message nor publication ref. Repositories unable to apply
+atomic ref transactions fail rather than partially publish.
+
+Before publishing, selection excludes the histories named by those protected publication refs,
+plus the last synchronized source. Public discussion tags are labels only: neither their
+contents nor their author are publication evidence. Readers, including the original pusher,
+cannot suppress source messages or block synchronization by supplying `ReviewInput.tag`.
+A crash after publication but before lifecycle completion is reconciled from the protected
+refs, including comment-only operations without a patch-set reservation. Repeated sync/recovery,
+the same head, a target-only refresh, and returning to an already published source hash publish
+nothing. Amend/rebase/force-push commits with **new hashes** are new identities and may be
+published; unchanged ancestors are not repeated. On upgrade, the last synchronized source is
+the baseline: old pre-feature history is not replayed. Tags from an earlier untrusted-tag
+implementation are not imported as evidence; historical rewritten heads known only to such
+tags have no authenticated migration path.
+
+Limits: at most 50 displayed entries, 8,000 UTF-16 characters per commit message and 32,000
+for the grouped source text. Oversized messages and omitted entries are explicitly marked;
+the batch is considered published, so a retry does not repeatedly emit the truncated portion.
+Newlines are normalized, controls and bidi-format overrides removed, other Unicode (including
+emoji ZWJ sequences) retained, and Gerrit account-template tokens are neutralized by inserting
+a space after `<`. Original source commits are not modified.
+
+Operational boundaries: this is persisted-message idempotency on the supported single primary,
+not exactly-once email/event delivery. Publication refs retain source history across branch
+rewrites and ordinary Git GC. They accumulate one ref per published batch and are not deleted
+automatically when a branch or Change closes; storage/backup policies must account for that
+retention. Back up and restore publication refs together with NoteDb and lifecycle state.
+Administrators with direct repository access can still tamper with protected evidence or source
+objects. Inconsistent backups, manual removal or corruption can cause replay or fail-closed
+synchronization; no public-tag fallback is used. A pre-upgrade last synchronized source without
+a publication ref still requires its Git objects to be available.
+
 ## Edits made in Gerrit
 
 Reviewers and authors can change files directly in Gerrit (inline edit and publish, or an
