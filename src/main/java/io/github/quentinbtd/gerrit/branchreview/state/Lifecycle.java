@@ -4,6 +4,7 @@
 package io.github.quentinbtd.gerrit.branchreview.state;
 
 import io.github.quentinbtd.gerrit.branchreview.text.TextOwnership;
+import java.util.List;
 
 /**
  * Durable state of one review lifecycle for a (project, source ref) pair.
@@ -54,6 +55,9 @@ public final class Lifecycle {
     public String targetId;
     public String startedOn;
 
+    /** Null on older reservations, whose source must also be excluded from future backfill. */
+    public Boolean publishCommitMessages;
+
     /** Text ownership state to record once the insertion is confirmed. */
     public Text text;
   }
@@ -97,6 +101,14 @@ public final class Lifecycle {
   public Status status = Status.ACTIVE;
   public SyncState syncState = SyncState.PENDING;
   public String lastSourceId;
+
+  /**
+   * Histories intentionally excluded from source discussion (disabled periods and upgrade
+   * baseline). Null on older state, before the last synchronized source is preserved here. These
+   * are textual OIDs, not Git reachability links.
+   */
+  public List<String> sourceMessageBaselines;
+
   public String lastTargetId;
   public String lastSyntheticCommit;
   public int lastSyntheticPatchSet;

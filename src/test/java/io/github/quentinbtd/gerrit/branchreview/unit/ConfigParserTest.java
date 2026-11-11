@@ -26,6 +26,42 @@ public class ConfigParserTest {
       """;
 
   @Test
+  public void publishCommitMessagesDefaultsTrueAndAcceptsExplicitValues() {
+    assertThat(ConfigParser.parseText(VALID).publishCommitMessages()).isTrue();
+    for (boolean enabled : List.of(false, true)) {
+      var cfg = ConfigParser.parseText(VALID + "  publishCommitMessages = " + enabled + "\n");
+      assertThat(cfg.errors()).isEmpty();
+      assertThat(cfg.isEnabled()).isTrue();
+      assertThat(cfg.publishCommitMessages()).isEqualTo(enabled);
+    }
+  }
+
+  @Test
+  public void publishCommitMessagesInheritsAndChildOverrides() {
+    String off = "[branchReview]\n publishCommitMessages = false\n";
+    String on = "[branchReview]\n publishCommitMessages = true\n";
+    assertThat(ConfigParser.parseLayer(off, "parent").isEmpty()).isFalse();
+    assertThat(merge(VALID + " publishCommitMessages = false\n", null, "").publishCommitMessages())
+        .isFalse();
+    assertThat(merge(VALID, off, on).publishCommitMessages()).isTrue();
+    assertThat(merge(VALID, on, off).publishCommitMessages()).isFalse();
+  }
+
+  @Test
+  public void publishCommitMessagesRejectsInvalidDuplicateAndRouteValues() {
+    assertInvalid(
+        VALID + " publishCommitMessages = maybe\n", "publishCommitMessages must be true or false");
+    assertInvalid(
+        VALID + " publishCommitMessages = true\n publishCommitMessages = false\n",
+        "publishCommitMessages must be set at most once");
+    assertInvalid(
+        VALID
+            + "[target \"refs/heads/stable\"]\n"
+            + " sourceBranchPattern = refs/heads/stable-*\n publishCommitMessages = false\n",
+        "unknown key target");
+  }
+
+  @Test
   public void missingOrEmptyFileIsDisabled() {
     assertThat(ConfigParser.parseText(null).status()).isEqualTo(BranchReviewConfig.Status.DISABLED);
     assertThat(ConfigParser.parseText("  \n").status())
