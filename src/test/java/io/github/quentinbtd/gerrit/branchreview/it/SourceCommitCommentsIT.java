@@ -31,6 +31,43 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
   @Inject private ExtensionRegistry extensionRegistry;
 
   @Test
+  public void commentOnlyKeepsGerritsDefaultNotificationPolicy() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var tip = commit(repo, "A", "initial source body");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    assertThat(change(n).workInProgress).isTrue();
+    gApi.changes().id(project.get(), n).addReviewer(admin.email());
+    for (int stage = 0; stage < 3; stage++) {
+      if (stage == 1) {
+        gApi.changes().id(project.get(), n).setReadyForReview();
+      } else if (stage == 2) {
+        gApi.changes().id(project.get(), n).setWorkInProgress();
+      }
+      sender.clear();
+      var control = new ReviewInput();
+      control.message = "ordinary review control " + stage;
+      userRestSession.post("/changes/" + n + "/revisions/current/review", control).assertOK();
+      boolean ordinaryReviewIsSilent = sender.getMessages().isEmpty();
+      assertThat(ordinaryReviewIsSilent).isEqualTo(stage == 0);
+      sender.clear();
+      tip =
+          repo.amend(tip)
+              .author(user.newIdent())
+              .committer(user.newIdent())
+              .message("Reworded\n\nsource discussion stage " + stage)
+              .create();
+      repo.reset(tip);
+      assertOk(push(repo, "HEAD:" + FEATURE, true), FEATURE);
+      assertThat(change(n).revisions).hasSize(1);
+      assertThat(comments(n)).hasSize(stage + 2);
+      assertThat(sender.getMessages().isEmpty()).isEqualTo(ordinaryReviewIsSilent);
+      assertThat(Boolean.TRUE.equals(change(n).workInProgress)).isEqualTo(stage != 1);
+    }
+  }
+
+  @Test
   public void readablePublicationDoesNotExposeHiddenSourceHistory() throws Exception {
     publicationVisibilityDoesNotExposeHistory(false);
   }

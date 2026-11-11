@@ -127,7 +127,9 @@ WIP/Ready, notification and revision-created behavior is retained.
 A fresh source commit with the same effective tree/base (including a message-only amend)
 adds a comment-only NoteDb update, not a fake patch set or a description edit. This uses normal
 Gerrit attribution, review-email delivery and the comment-added event, without voting, changing
-reviewers or publishing drafts. A source contribution that becomes empty can also publish
+reviewers or publishing drafts. Comment-only updates use Gerrit's ordinary discussion notification
+default: silent while WIP if review has never started, normal notifications otherwise.
+A source contribution that becomes empty can also publish
 messages on its existing Change, but remains `EMPTY` and Submit-blocked. An initially empty
 branch still creates no Change, so there is nowhere to post a discussion message. Conflicting,
 unrelated, over-limit or permission-blocked work is not published until synchronization is
@@ -190,6 +192,15 @@ or selecting source messages. Squash/patch-set updates, other Gerrit messages an
 completion still run; equivalent/no-op and existing-Change `EMPTY` paths also advance the source
 baseline. Existing discussion/evidence is kept. Re-enabling publishes only fresh commits beyond
 that baseline, never automatic catch-up of already synchronized disabled-period commits.
+Skipped source heads are retained as textual exclusion baselines in lifecycle state, independently
+of `lastSourceId`, so a later rewrite or return to an old hash cannot forget them. Reservations
+retain the publication setting used for insertion: recovery does not reinterpret a disabled
+insertion using a subsequently enabled configuration. An older lifecycle's current synchronized
+head is preserved as its upgrade baseline before advancing; older rewritten heads already lost
+from that state cannot be reconstructed automatically. These exclusions accumulate with distinct
+skipped heads within the existing lifecycle-state size limit and require the same source-object
+backup as publication watermarks; they neither retain source objects nor create publication refs
+while disabled.
 
 ## Edits made in Gerrit
 

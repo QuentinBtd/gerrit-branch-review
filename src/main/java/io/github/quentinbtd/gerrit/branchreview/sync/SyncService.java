@@ -24,6 +24,7 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.change.ChangeInserter;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.events.CommitReceivedEvent;
@@ -533,6 +534,7 @@ public class SyncService {
     store.saveLink(repo, project, number, link, ObjectId.zeroId());
 
     lc.pending = pending("create", number, 1, commit, plan, text.state());
+    lc.pending.publishCommitMessages = cfg.publishCommitMessages();
     lc.syncState = SyncState.PENDING;
     lc.observedSourceId = sourceId.name();
     stateId = store.saveLifecycle(repo, project, lc, stateId, "reserve change " + number);
@@ -800,7 +802,7 @@ public class SyncService {
         publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
         if (!cfg.publishCommitMessages()) {
           // Deliberately skipped discussion must not be caught up on re-enabling.
-          lc.lastSourceId = sourceId.name();
+          advanceSourceBaseline(lc, sourceId.name(), false);
         }
       }
       lc.syncState =
@@ -835,7 +837,7 @@ public class SyncService {
         && currentCommit.getParent(0).equals(plan.targetId())
         && !opts.resetText()) {
       publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
-      lc.lastSourceId = sourceId.name();
+      advanceSourceBaseline(lc, sourceId.name(), cfg.publishCommitMessages());
       lc.observedSourceId = sourceId.name();
       lc.lastTargetId = plan.targetId().name();
       lc.lastSyntheticCommit = current.commitId().name();
@@ -884,7 +886,7 @@ public class SyncService {
     ins.flush();
     if (commit.equals(current.commitId())) {
       publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
-      lc.lastSourceId = sourceId.name();
+      advanceSourceBaseline(lc, sourceId.name(), cfg.publishCommitMessages());
       lc.observedSourceId = sourceId.name();
       lc.syncState = SyncState.SYNCED;
       store.saveLifecycle(repo, project, lc, stateId, "identical commit");
@@ -899,6 +901,7 @@ public class SyncService {
     PatchSet.Id psId = ChangeUtil.nextPatchSetId(repo, current.id());
     String sourceMessages = sourceMessages(repo, cfg, lc, notes, plan);
     lc.pending = pending("patchset", lc.changeNumber, psId.get(), commit, plan, text.state());
+    lc.pending.publishCommitMessages = cfg.publishCommitMessages();
     lc.syncState = SyncState.PENDING;
     lc.observedSourceId = sourceId.name();
     stateId = store.saveLifecycle(repo, project, lc, stateId, "reserve patch set " + psId.get());
@@ -953,6 +956,11 @@ public class SyncService {
       bu.addOp(
           notes.getChangeId(),
           new ExpectCurrentPatchSet(notes.getCurrentPatchSet().id(), notes.getChange().getDest()));
+      // Match PostReview's default for an ordinary discussion tag: a WIP Change whose review
+      // has never started is silent; ready and previously reviewed Changes retain notifications.
+      if (notes.getChange().isWorkInProgress() && !notes.getChange().hasReviewStarted()) {
+        bu.setNotify(NotifyResolver.Result.none());
+      }
       sourceCommentPublisher.add(
           bu, notes, message.strip(), SourceCommitMessages.tag(lc.id, plan.sourceId()));
       SourceCommentPublisher.recordPublication(bu, notes.getChangeId(), lc.id, plan.sourceId());
@@ -981,6 +989,9 @@ public class SyncService {
       // Upgrade compatibility: do not replay the pre-feature synchronized history.
       if (lc.lastSourceId != null) {
         published.add(ObjectId.fromString(lc.lastSourceId));
+      }
+      if (lc.sourceMessageBaselines != null) {
+        lc.sourceMessageBaselines.forEach(id -> published.add(ObjectId.fromString(id)));
       }
     }
     String rendered =
@@ -1066,7 +1077,7 @@ public class SyncService {
     lc.changeNumber = p.changeNumber;
     lc.lastSyntheticCommit = p.commit;
     lc.lastSyntheticPatchSet = p.patchSet;
-    lc.lastSourceId = p.sourceId;
+    advanceSourceBaseline(lc, p.sourceId, Boolean.TRUE.equals(p.publishCommitMessages));
     lc.lastTargetId = p.targetId;
     if (p.text != null) {
       lc.text = p.text;
@@ -1076,6 +1087,20 @@ public class SyncService {
     lc.lastError = null;
     lc.attempts = 0;
     lc.nextAttemptAfter = null;
+  }
+
+  private static void advanceSourceBaseline(Lifecycle lc, String source, boolean publishMessages) {
+    if (lc.sourceMessageBaselines == null) {
+      lc.sourceMessageBaselines = new ArrayList<>();
+      // Preserve the pre-feature baseline before a rewrite replaces lastSourceId.
+      if (lc.lastSourceId != null) {
+        lc.sourceMessageBaselines.add(lc.lastSourceId);
+      }
+    }
+    if (!publishMessages && !lc.sourceMessageBaselines.contains(source)) {
+      lc.sourceMessageBaselines.add(source);
+    }
+    lc.lastSourceId = source;
   }
 
   /**

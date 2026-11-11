@@ -18,6 +18,76 @@ public class PublishCommitMessagesIT extends AbstractBranchReviewIT {
   private static final String FEATURE = "refs/heads/feature/messages-option";
 
   @Test
+  public void skippedHistoryStaysExcludedAfterEnabledRewrite() throws Exception {
+    rewriteDoesNotBackfill(false, false);
+  }
+
+  @Test
+  public void recoveredDisabledInsertionKeepsItsPublicationPolicy() throws Exception {
+    rewriteDoesNotBackfill(true, false);
+  }
+
+  @Test
+  public void upgradeBaselineSurvivesAnEnabledRewrite() throws Exception {
+    rewriteDoesNotBackfill(false, true);
+  }
+
+  private void rewriteDoesNotBackfill(boolean recover, boolean legacy) throws Exception {
+    setConfig(DEFAULT_CONFIG + " publishCommitMessages = false\n");
+    var repo = cloneAs(user);
+    var skipped = commit(repo, "A", "skipped source discussion body");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    assertState(n, skipped, 1, 0, 0);
+    if (recover || legacy) {
+      try (var r = repoManager.openRepository(project)) {
+        var loaded = stateStore.loadLifecycle(r, FEATURE);
+        var lc = loaded.value();
+        lc.sourceMessageBaselines = null;
+        if (recover) {
+          lc.pending = new Lifecycle.Pending();
+          lc.pending.op = "create";
+          lc.pending.changeNumber = n;
+          lc.pending.patchSet = 1;
+          lc.pending.commit = lc.lastSyntheticCommit;
+          lc.pending.sourceId = lc.lastSourceId;
+          lc.pending.targetId = lc.lastTargetId;
+          lc.pending.publishCommitMessages = false;
+          lc.changeNumber = 0;
+          lc.lastSyntheticPatchSet = 0;
+          lc.lastSourceId = null;
+          lc.syncState = Lifecycle.SyncState.PENDING;
+        }
+        stateStore.saveLifecycle(
+            r, project, lc, loaded.refId(), "simulate upgrade or pre-completion crash");
+      }
+    }
+    setConfig(DEFAULT_CONFIG + " publishCommitMessages = true\n");
+    syncViaRest(user, FEATURE, new PostSync.Input());
+    assertState(n, skipped, 1, 0, 0);
+    var rewritten =
+        repo.amend(skipped)
+            .author(user.newIdent())
+            .committer(user.newIdent())
+            .message("Rewritten\n\nfresh enabled discussion body")
+            .create();
+    repo.reset(rewritten);
+    assertOk(push(repo, "HEAD:" + FEATURE, true), FEATURE);
+    assertState(n, rewritten, 1, 1, 1);
+    assertThat(comments(n).get(0).message).contains("fresh enabled discussion body");
+    assertThat(comments(n).get(0).message).doesNotContain("skipped source discussion body");
+    repo.reset(skipped);
+    assertOk(push(repo, "HEAD:" + FEATURE, true), FEATURE);
+    syncViaRest(user, FEATURE, new PostSync.Input());
+    assertState(n, skipped, 1, 1, 1);
+    var fresh = commit(repo, "Fresh", "fresh descendant of skipped history");
+    assertOk(push(repo, FEATURE), FEATURE);
+    assertState(n, fresh, 2, 2, 2);
+    assertThat(comments(n).get(1).message).contains("fresh descendant of skipped history");
+    assertThat(comments(n).get(1).message).doesNotContain("skipped source discussion body");
+  }
+
+  @Test
   public void inheritedFalseKeepsSyncThroughCreateUpdateAmendEmptyAndReenable() throws Exception {
     var parent = projectOperations.newProject().createEmptyCommit(false).create();
     gApi.projects().name(project.get()).parent(parent.get());
@@ -71,6 +141,12 @@ public class PublishCommitMessagesIT extends AbstractBranchReviewIT {
     assertThat(comments(n).get(0).message).doesNotContain("disabled");
     syncViaRest(user, FEATURE, new PostSync.Input());
     assertState(n, c, 3, 1, 1);
+    // B was rewritten away while disabled, so the enabled C marker does not cover it.
+    repo.reset(b);
+    assertOk(push(repo, "HEAD:" + FEATURE, true), FEATURE);
+    assertState(n, b, 4, 1, 1);
+    syncViaRest(user, FEATURE, new PostSync.Input());
+    assertState(n, b, 4, 1, 1);
   }
 
   @Test
