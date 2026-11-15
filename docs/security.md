@@ -51,7 +51,8 @@
   fetch the marker but does not gain a source-history root through it, even if the Change later
   becomes private. This does not hide source identities: source OIDs are already in ref names
   and state metadata. It also does not override Gerrit's existing source-ref/object-fetch policy.
-  Markers do not retain old source objects against GC; missing selection history fails closed.
+  Markers do not retain old source objects against GC; a pruned watermark is ignored (messages
+  may be listed again), and invalid evidence skips the discussion without blocking the sync.
   Setting project-wide `publishCommitMessages = false` skips new source discussion and evidence
   without disabling synchronization or removing existing messages/refs. It does not hide the
   branch names and abbreviated source ids already used in synthetic Change text.

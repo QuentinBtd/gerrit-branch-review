@@ -943,8 +943,7 @@ public class SyncService {
       Lifecycle lc,
       ChangeNotes notes,
       SquashPlanner.Plan plan,
-      IdentifiedUser user)
-      throws IOException {
+      IdentifiedUser user) {
     String message = sourceMessages(repo, cfg, lc, notes, plan);
     if (message.isEmpty()) {
       return;
@@ -966,9 +965,10 @@ public class SyncService {
       SourceCommentPublisher.recordPublication(bu, notes.getChangeId(), lc.id, plan.sourceId());
       bu.execute();
     } catch (RestApiException | UpdateException e) {
-      // Do not advance lastSourceId. A retry reconciles the atomic message/tag in NoteDb,
-      // including failures after commit (e.g. indexing), before trying to publish again.
-      throw new IOException("cannot publish source commit messages", e);
+      // The discussion is supplementary: never let it block synchronization. The message and its
+      // evidence are written atomically, so they are either both present or both absent.
+      log.atWarning().withCause(e).log(
+          "cannot publish source commit messages on change %s", notes.getChangeId());
     }
   }
 
@@ -977,12 +977,25 @@ public class SyncService {
       BranchReviewConfig cfg,
       Lifecycle lc,
       ChangeNotes notes,
-      SquashPlanner.Plan plan)
-      throws IOException {
+      SquashPlanner.Plan plan) {
     if (!cfg.publishCommitMessages()) {
       // Do not read/validate markers or traverse discussion-selection history when disabled.
       return "";
     }
+    try {
+      return selectSourceMessages(repo, lc, notes, plan);
+    } catch (IOException | RuntimeException e) {
+      // Malformed evidence or an unreadable history skips this discussion (nothing is replayed);
+      // it never blocks the synchronization itself.
+      log.atWarning().withCause(e).log(
+          "skipping source commit messages for %s of lifecycle %s", plan.sourceId().name(), lc.id);
+      return "";
+    }
+  }
+
+  private String selectSourceMessages(
+      Repository repo, Lifecycle lc, ChangeNotes notes, SquashPlanner.Plan plan)
+      throws IOException {
     List<ObjectId> published = new ArrayList<>();
     if (notes != null) {
       published.addAll(SourceCommentPublisher.publishedHeads(repo, notes.getChangeId(), lc.id));

@@ -92,11 +92,11 @@ public class SourceCommitMessagesTest {
       assertThat(SourceCommitMessages.select(repo, rewritten, base, List.of(c), 20))
           .containsExactly(new Commit(rewritten.name(), "B rewritten"));
       assertThat(SourceCommitMessages.select(repo, b, base, List.of(c, rewritten), 20)).isEmpty();
-      assertThrows(
-          IOException.class,
-          () ->
+      // A published head pruned by GC is ignored instead of blocking the synchronization.
+      assertThat(
               SourceCommitMessages.select(
-                  repo, c, base, List.of(ObjectId.fromString("f".repeat(40))), 20));
+                  repo, c, merge, List.of(ObjectId.fromString("f".repeat(40))), 20))
+          .containsExactly(new Commit(c.name(), "C\n\nfull C"));
     }
   }
 }

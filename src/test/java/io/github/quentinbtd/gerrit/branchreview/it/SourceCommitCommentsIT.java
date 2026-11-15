@@ -197,7 +197,7 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
   }
 
   @Test
-  public void malformedPublicationMetadataFailsClosed() throws Exception {
+  public void malformedPublicationMetadataSkipsTheDiscussionButNotTheSync() throws Exception {
     enable();
     var repo = cloneAs(user);
     var a = commit(repo, "A", "already published");
@@ -208,7 +208,6 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
     var b = commit(repo, "B", "must wait for valid evidence");
     // Stage B without running synchronization for this lifecycle.
     assertOk(push(repo, "refs/heads/feature/private/staged"), "refs/heads/feature/private/staged");
-    serverCommit(FEATURE, "B.txt", "B");
     try (var r = repoManager.openRepository(project);
         var rw = new org.eclipse.jgit.revwalk.RevWalk(r);
         var inserter = r.newObjectInserter();
@@ -243,6 +242,7 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
       tag.setMessage("not publication evidence");
       badObjects.add(inserter.insert(tag));
       inserter.flush();
+      int patchSets = 1;
       for (var invalid : badObjects) {
         var update = r.updateRef(ref);
         update.setNewObjectId(invalid);
@@ -251,19 +251,67 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
             .isAnyOf(
                 org.eclipse.jgit.lib.RefUpdate.Result.FORCED,
                 org.eclipse.jgit.lib.RefUpdate.Result.NEW);
+        serverCommit(FEATURE, "B" + patchSets + ".txt", "B");
         syncViaRest(user, FEATURE, new PostSync.Input());
-        assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.FAILED);
+        // Untrusted evidence only skips the discussion: nothing is replayed, nothing is blocked.
+        assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
         assertThat(comments(n)).hasSize(1);
-        assertThat(change(n).revisions).hasSize(1);
+        assertThat(change(n).revisions).hasSize(++patchSets);
       }
       var restore = r.updateRef(ref);
       restore.setNewObjectId(original);
       restore.setForceUpdate(true);
       restore.update();
+      var last = serverCommit(FEATURE, "C.txt", "C");
+      syncViaRest(user, FEATURE, new PostSync.Input());
+      assertThat(change(n).revisions).hasSize(patchSets + 1);
+      // Valid evidence again: A is still not replayed.
+      assertThat(comments(n)).hasSize(2);
+      String latest = comments(n).get(1).message;
+      assertThat(latest).contains(last.abbreviate(12).name());
+      assertThat(latest).doesNotContain(a.abbreviate(12).name());
     }
-    syncViaRest(user, FEATURE, new PostSync.Input());
-    assertThat(comments(n)).hasSize(2);
+  }
+
+  @Test
+  public void prunedPublishedHeadsDoNotBlockSynchronization() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var a = commit(repo, "A", "published before the rewrite");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    // Evidence and a baseline for source heads whose objects GC has since pruned.
+    var gone = org.eclipse.jgit.lib.ObjectId.fromString("f".repeat(40));
+    try (var r = repoManager.openRepository(project);
+        var rw = new org.eclipse.jgit.revwalk.RevWalk(r);
+        var inserter = r.newObjectInserter();
+        var context =
+            com.google.gerrit.server.update.context.RefUpdateContext.open(
+                com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.PLUGIN)) {
+      var valid = rw.parseCommit(refValue(publicationPrefix(n) + a.name()));
+      var metadata = new org.eclipse.jgit.lib.CommitBuilder();
+      metadata.setAuthor(valid.getAuthorIdent());
+      metadata.setCommitter(valid.getCommitterIdent());
+      metadata.setTreeId(valid.getTree());
+      metadata.setMessage(valid.getFullMessage().replace(a.name(), gone.name()));
+      var evidence = inserter.insert(metadata);
+      inserter.flush();
+      var update = r.updateRef(publicationPrefix(n) + gone.name());
+      update.setNewObjectId(evidence);
+      assertThat(update.update()).isEqualTo(org.eclipse.jgit.lib.RefUpdate.Result.NEW);
+      var loaded = stateStore.loadLifecycle(r, FEATURE);
+      loaded.value().sourceMessageBaselines = new java.util.ArrayList<>(List.of("e".repeat(40)));
+      stateStore.saveLifecycle(r, project, loaded.value(), loaded.refId(), "pruned baseline");
+    }
+    var b = commit(repo, "B", "after the prune");
+    var result = push(repo, FEATURE);
+    assertOk(result, FEATURE);
+    assertThat(joined(result)).doesNotContain("NOT synchronized");
+    assertThat(lifecycle(FEATURE).syncState).isEqualTo(Lifecycle.SyncState.SYNCED);
     assertThat(change(n).revisions).hasSize(2);
+    assertThat(comments(n)).hasSize(2);
+    assertThat(comments(n).get(1).message).contains(b.abbreviate(12).name());
+    assertThat(comments(n).get(1).message).doesNotContain(a.abbreviate(12).name());
   }
 
   @Test

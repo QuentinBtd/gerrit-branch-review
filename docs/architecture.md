@@ -142,7 +142,8 @@ Change number, lifecycle id and full source SHA in canonical text. The commit ha
 Git tree and **zero parents**, not the source tree or any source-history parent. Source OIDs
 in text and ref names are identifiers, not Git reachability links. Readers validate the direct
 commit type (no tag peeling), exact schema/fields, empty tree, zero parents and name-to-source
-binding before using the stored source OID for selection; malformed evidence fails closed.
+binding before using the stored source OID for selection; malformed evidence skips the
+discussion for that synchronization (nothing is replayed), never the synchronization itself.
 The ref is added through the **same project BatchUpdate** as the discussion message and NoteDb
 update. Gerrit combines these commands in one atomic
 project BatchRefUpdate; there is no cross-repository transaction or later evidence write.
@@ -175,13 +176,13 @@ Git tree; they **do not retain source objects or histories** across branch rewri
 They accumulate one ref per published batch and are not deleted automatically when a branch or
 Change closes. Back up and restore publication refs together with NoteDb and lifecycle state;
 a complete recovery backup must separately preserve any source objects required for selection,
-under the source repository's existing access controls. Both new and pre-upgrade watermarks
-require the referenced source commits and their selection history to remain available. If an
-old rewritten source object is missing or pruned, synchronization fails closed rather than
-replaying uncertain history; this is an availability limit, not a reason to expose history
-through the publication namespace. Administrators with direct repository access can still
-tamper with evidence or source objects. Inconsistent backups, manual removal or corruption
-can cause replay or fail-closed synchronization; no public-tag fallback is used. Earlier
+under the source repository's existing access controls. Watermarks whose source commit is
+missing (a rewritten history pruned by GC) are ignored: commits still reachable from the new
+source may then be listed again in the next discussion. Any other failure to select or publish
+the messages is logged and skips that discussion; source commit messages are supplementary
+and never block or fail a synchronization. Administrators with direct repository access can
+still tamper with evidence or source objects. Inconsistent backups, manual removal or
+corruption can cause a replayed or skipped discussion; no public-tag fallback is used. Earlier
 unreleased source-pointing publication refs are not a supported metadata format and are
 rejected, not silently trusted or automatically rewritten. This change does not remove an
 already exposed ref or revoke objects previously fetched from such a build.

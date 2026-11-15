@@ -40,14 +40,24 @@ public final class SourceCommitMessages {
         .toList();
   }
 
-  /** Oldest-first contribution, excluding every already published source history and merges. */
+  /**
+   * Oldest-first contribution, excluding every already published source history and merges.
+   * Published heads whose objects are gone (rewritten history pruned by GC) are ignored: commits
+   * still reachable from {@code source} are then listed again, which beats blocking the sync.
+   */
   public static List<Commit> select(
       Repository repo, ObjectId source, ObjectId target, Collection<ObjectId> published, int limit)
       throws IOException {
+    List<ObjectId> present = new ArrayList<>();
+    for (ObjectId head : published) {
+      if (repo.getObjectDatabase().has(head)) {
+        present.add(head);
+      }
+    }
     try (RevWalk rw = new RevWalk(repo)) {
       rw.markStart(rw.parseCommit(source));
       rw.markUninteresting(rw.parseCommit(target));
-      for (ObjectId head : published) {
+      for (ObjectId head : present) {
         rw.markUninteresting(rw.parseCommit(head));
       }
       int count = 0;
@@ -61,7 +71,7 @@ public final class SourceCommitMessages {
       rw.sort(RevSort.REVERSE, true);
       rw.markStart(rw.parseCommit(source));
       rw.markUninteresting(rw.parseCommit(target));
-      for (ObjectId head : published) {
+      for (ObjectId head : present) {
         rw.markUninteresting(rw.parseCommit(head));
       }
       List<Commit> commits = new ArrayList<>();
