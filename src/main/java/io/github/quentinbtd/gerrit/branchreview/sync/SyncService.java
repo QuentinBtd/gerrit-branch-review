@@ -85,6 +85,7 @@ import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -357,6 +358,7 @@ public class SyncService {
           case MERGED -> {
             markMerged(lc, notes);
             stateId = store.saveLifecycle(repo, project, lc, stateId, "change merged");
+            deletePublications(repo, project, lc);
             notes = null;
           }
           case ABANDONED -> {
@@ -378,6 +380,7 @@ public class SyncService {
             }
             lc.status = Lifecycle.Status.CLOSED;
             stateId = store.saveLifecycle(repo, project, lc, stateId, "close abandoned lifecycle");
+            deletePublications(repo, project, lc);
             notes = null;
           }
           case NEW -> {}
@@ -561,7 +564,7 @@ public class SyncService {
     } catch (RestApiException | UpdateException e) {
       return afterInsertFailure(repo, project, lc, stateId, e);
     }
-    finalizePending(lc);
+    finalizePending(repo, lc);
     store.saveLifecycle(repo, project, lc, stateId, "created change " + number);
     return result(SyncResult.Kind.CREATED, project, lc, wip);
   }
@@ -802,7 +805,7 @@ public class SyncService {
         publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
         if (!cfg.publishCommitMessages()) {
           // Deliberately skipped discussion must not be caught up on re-enabling.
-          advanceSourceBaseline(lc, sourceId.name(), false);
+          advanceSourceBaseline(repo, lc, sourceId.name(), plan.targetId(), false);
         }
       }
       lc.syncState =
@@ -837,7 +840,8 @@ public class SyncService {
         && currentCommit.getParent(0).equals(plan.targetId())
         && !opts.resetText()) {
       publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
-      advanceSourceBaseline(lc, sourceId.name(), cfg.publishCommitMessages());
+      advanceSourceBaseline(
+          repo, lc, sourceId.name(), plan.targetId(), cfg.publishCommitMessages());
       lc.observedSourceId = sourceId.name();
       lc.lastTargetId = plan.targetId().name();
       lc.lastSyntheticCommit = current.commitId().name();
@@ -886,7 +890,8 @@ public class SyncService {
     ins.flush();
     if (commit.equals(current.commitId())) {
       publishCommentOnly(repo, ins, rw, project, cfg, lc, notes, plan, user);
-      advanceSourceBaseline(lc, sourceId.name(), cfg.publishCommitMessages());
+      advanceSourceBaseline(
+          repo, lc, sourceId.name(), plan.targetId(), cfg.publishCommitMessages());
       lc.observedSourceId = sourceId.name();
       lc.syncState = SyncState.SYNCED;
       store.saveLifecycle(repo, project, lc, stateId, "identical commit");
@@ -928,7 +933,7 @@ public class SyncService {
     } catch (RestApiException | UpdateException e) {
       return afterInsertFailure(repo, project, lc, stateId, e);
     }
-    finalizePending(lc);
+    finalizePending(repo, lc);
     store.saveLifecycle(repo, project, lc, stateId, "patch set " + psId.get());
     ChangeNotes after = notesFactory.createChecked(project, notes.getChangeId());
     return result(SyncResult.Kind.UPDATED, project, lc, after.getChange().isWorkInProgress());
@@ -962,7 +967,8 @@ public class SyncService {
       }
       sourceCommentPublisher.add(
           bu, notes, message.strip(), SourceCommitMessages.tag(lc.id, plan.sourceId()));
-      SourceCommentPublisher.recordPublication(bu, notes.getChangeId(), lc.id, plan.sourceId());
+      SourceCommentPublisher.recordPublication(
+          bu, notes.getChangeId(), lc.id, plan.sourceId(), plan.targetId(), settings.maxCommits());
       bu.execute();
     } catch (RestApiException | UpdateException e) {
       // The discussion is supplementary: never let it block synchronization. The message and its
@@ -1014,7 +1020,7 @@ public class SyncService {
     return rendered.isEmpty() ? "" : "\n\n" + rendered;
   }
 
-  private static void tagSourceMessages(
+  private void tagSourceMessages(
       BatchUpdate bu,
       Change.Id change,
       PatchSet.Id ps,
@@ -1022,7 +1028,8 @@ public class SyncService {
       SquashPlanner.Plan plan,
       String messages) {
     if (!messages.isEmpty()) {
-      SourceCommentPublisher.recordPublication(bu, change, lc.id, plan.sourceId());
+      SourceCommentPublisher.recordPublication(
+          bu, change, lc.id, plan.sourceId(), plan.targetId(), settings.maxCommits());
       String tag = SourceCommitMessages.tag(lc.id, plan.sourceId());
       bu.addOp(
           change,
@@ -1085,12 +1092,17 @@ public class SyncService {
     return p;
   }
 
-  private static void finalizePending(Lifecycle lc) {
+  private void finalizePending(Repository repo, Lifecycle lc) {
     Lifecycle.Pending p = lc.pending;
     lc.changeNumber = p.changeNumber;
     lc.lastSyntheticCommit = p.commit;
     lc.lastSyntheticPatchSet = p.patchSet;
-    advanceSourceBaseline(lc, p.sourceId, Boolean.TRUE.equals(p.publishCommitMessages));
+    advanceSourceBaseline(
+        repo,
+        lc,
+        p.sourceId,
+        p.targetId == null ? null : ObjectId.fromString(p.targetId),
+        Boolean.TRUE.equals(p.publishCommitMessages));
     lc.lastTargetId = p.targetId;
     if (p.text != null) {
       lc.text = p.text;
@@ -1102,7 +1114,8 @@ public class SyncService {
     lc.nextAttemptAfter = null;
   }
 
-  private static void advanceSourceBaseline(Lifecycle lc, String source, boolean publishMessages) {
+  private void advanceSourceBaseline(
+      Repository repo, Lifecycle lc, String source, ObjectId target, boolean publishMessages) {
     if (lc.sourceMessageBaselines == null) {
       lc.sourceMessageBaselines = new ArrayList<>();
       // Preserve the pre-feature baseline before a rewrite replaces lastSourceId.
@@ -1111,9 +1124,48 @@ public class SyncService {
       }
     }
     if (!publishMessages && !lc.sourceMessageBaselines.contains(source)) {
+      compactBaselines(repo, lc, ObjectId.fromString(source), target);
       lc.sourceMessageBaselines.add(source);
     }
     lc.lastSourceId = source;
+  }
+
+  /**
+   * Drops the baselines that {@code source}, about to become one, makes redundant: its ancestors
+   * (excluded through it) and heads pruned by GC (ignored by the selection anyway). Without this,
+   * every push while {@code publishCommitMessages = false} would grow the lifecycle state.
+   */
+  private void compactBaselines(Repository repo, Lifecycle lc, ObjectId source, ObjectId target) {
+    try (ObjectReader reader = repo.newObjectReader()) {
+      Set<ObjectId> covered =
+          target == null
+              ? Set.of()
+              : SourceCommitMessages.contribution(reader, source, target, settings.maxCommits());
+      List<String> kept = new ArrayList<>();
+      for (String id : lc.sourceMessageBaselines) {
+        if (ObjectId.isId(id)
+            && !covered.contains(ObjectId.fromString(id))
+            && reader.has(ObjectId.fromString(id))) {
+          kept.add(id);
+        }
+      }
+      lc.sourceMessageBaselines = kept;
+    } catch (IOException e) {
+      log.atFine().withCause(e).log("cannot compact source message baselines of %s", lc.id);
+    }
+  }
+
+  /** Best effort: leftover evidence is harmless and removed by the next call. */
+  private void deletePublications(Repository repo, Project.NameKey project, Lifecycle lc) {
+    if (lc.changeNumber == 0) {
+      return;
+    }
+    try {
+      store.deletePublications(repo, project, lc.changeNumber, lc.id);
+    } catch (IOException e) {
+      log.atWarning().withCause(e).log(
+          "cannot delete source message evidence of %s change %d", project, lc.changeNumber);
+    }
   }
 
   /**
@@ -1137,7 +1189,7 @@ public class SyncService {
       done = ps != null && ps.commitId().name().equals(p.commit);
     }
     if (done) {
-      finalizePending(lc);
+      finalizePending(repo, lc);
       return store.saveLifecycle(
           repo, project, lc, stateId, "recovered " + p.op + " " + p.changeNumber);
     }

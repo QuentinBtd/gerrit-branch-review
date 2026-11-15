@@ -173,8 +173,12 @@ a space after `<`. Original source commits are not modified.
 Operational boundaries: this is persisted-message idempotency on the supported single primary,
 not exactly-once email/event delivery. Publication refs retain only their metadata and empty
 Git tree; they **do not retain source objects or histories** across branch rewrites or GC.
-They accumulate one ref per published batch and are not deleted automatically when a branch or
-Change closes. Back up and restore publication refs together with NoteDb and lifecycle state;
+Each publication deletes, in the same batch, the refs it makes redundant: heads that are
+ancestors of the new source (excluded through it from now on) and heads whose objects GC has
+pruned. Only rewritten-away histories keep a ref of their own, so a Change usually holds one
+ref per force-push. All the refs of a lifecycle are deleted when it ends (Change merged, or
+lifecycle closed with `--new-lifecycle`); an abandoned Change keeps them until then, since it
+can be restored. Back up and restore publication refs together with NoteDb and lifecycle state;
 a complete recovery backup must separately preserve any source objects required for selection,
 under the source repository's existing access controls. Watermarks whose source commit is
 missing (a rewritten history pruned by GC) are ignored: commits still reachable from the new
@@ -198,8 +202,10 @@ of `lastSourceId`, so a later rewrite or return to an old hash cannot forget the
 retain the publication setting used for insertion: recovery does not reinterpret a disabled
 insertion using a subsequently enabled configuration. An older lifecycle's current synchronized
 head is preserved as its upgrade baseline before advancing; older rewritten heads already lost
-from that state cannot be reconstructed automatically. These exclusions accumulate with distinct
-skipped heads within the existing lifecycle-state size limit and require the same source-object
+from that state cannot be reconstructed automatically. Adding a skipped head drops the
+baselines it makes redundant (its ancestors, and heads pruned by GC), so consecutive pushes
+while disabled keep a single entry; only rewritten-away skipped histories add one. Baselines
+require the same source-object
 backup as publication watermarks; they neither retain source objects nor create publication refs
 while disabled.
 

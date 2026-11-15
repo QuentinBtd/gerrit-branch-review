@@ -17,11 +17,14 @@ import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.update.RepoOnlyOp;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import io.github.quentinbtd.gerrit.branchreview.config.BranchReviewConfig;
+import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
+import io.github.quentinbtd.gerrit.branchreview.text.SourceCommitMessages;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -48,14 +51,40 @@ class SourceCommentPublisher {
   /**
    * Publication evidence lives in the protected state namespace, never in caller-controlled tags.
    * Repo updates and NoteDb updates share Gerrit's atomic project BatchRefUpdate.
+   *
+   * <p>Evidence made redundant by this one is deleted in the same update: heads that are ancestors
+   * of {@code source} (excluded through it from now on) and heads whose objects GC has pruned
+   * (ignored by the selection anyway). Only rewritten histories keep their own evidence.
    */
   static void recordPublication(
-      BatchUpdate bu, Change.Id change, String lifecycle, ObjectId source) {
-    String ref = publicationPrefix(change, lifecycle) + source.name();
+      BatchUpdate bu,
+      Change.Id change,
+      String lifecycle,
+      ObjectId source,
+      ObjectId target,
+      int maxCommits) {
+    String prefix = publicationPrefix(change, lifecycle);
+    String ref = prefix + source.name();
     bu.addRepoOnlyOp(
         new RepoOnlyOp() {
           @Override
           public void updateRepo(RepoContext ctx) throws IOException {
+            Map<String, ObjectId> others = new HashMap<>(ctx.getRepoView().getRefs(prefix));
+            others.remove(source.name());
+            if (!others.isEmpty()) {
+              var reader = ctx.getRevWalk().getObjectReader();
+              Set<ObjectId> covered =
+                  SourceCommitMessages.contribution(reader, source, target, maxCommits);
+              for (Map.Entry<String, ObjectId> e : others.entrySet()) {
+                if (!ObjectId.isId(e.getKey())) {
+                  continue; // Left for publishedHeads to reject.
+                }
+                ObjectId head = ObjectId.fromString(e.getKey());
+                if (covered.contains(head) || !reader.has(head)) {
+                  ctx.addRefUpdate(e.getValue(), ObjectId.zeroId(), prefix + e.getKey());
+                }
+              }
+            }
             var existing = ctx.getRepoView().getRef(ref);
             if (existing.isPresent()) {
               validatePublication(ctx.getRevWalk(), existing.get(), ref, change, lifecycle, source);
@@ -129,12 +158,7 @@ class SourceCommentPublisher {
   }
 
   private static String publicationPrefix(Change.Id change, String lifecycle) {
-    return BranchReviewConfig.STATE_NAMESPACE
-        + "publications/"
-        + change.get()
-        + "/"
-        + lifecycle
-        + "/";
+    return StateStore.publicationPrefix(change.get(), lifecycle);
   }
 
   void add(BatchUpdate bu, ChangeNotes notes, String message, String tag) {

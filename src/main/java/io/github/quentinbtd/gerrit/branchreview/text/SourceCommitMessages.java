@@ -6,8 +6,11 @@ package io.github.quentinbtd.gerrit.branchreview.text;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevSort;
@@ -82,6 +85,27 @@ public final class SourceCommitMessages {
       }
       return List.copyOf(commits);
     }
+  }
+
+  /**
+   * Commits reachable from {@code source} but not from {@code target}, or an empty set when there
+   * are more than {@code limit} (callers then skip an optional compaction). A watermark in this set
+   * is redundant once {@code source} itself is a watermark.
+   */
+  public static Set<ObjectId> contribution(
+      ObjectReader reader, ObjectId source, ObjectId target, int limit) throws IOException {
+    Set<ObjectId> out = new HashSet<>();
+    try (RevWalk rw = new RevWalk(reader)) {
+      rw.markStart(rw.parseCommit(source));
+      rw.markUninteresting(rw.parseCommit(target));
+      for (RevCommit c : rw) {
+        if (out.size() == limit) {
+          return Set.of();
+        }
+        out.add(c.copy());
+      }
+    }
+    return out;
   }
 
   /** Keeps trailers and all paragraphs, subject only to explicitly reported output limits. */

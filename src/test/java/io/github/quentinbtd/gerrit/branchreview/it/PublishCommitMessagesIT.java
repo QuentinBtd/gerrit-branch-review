@@ -18,6 +18,20 @@ public class PublishCommitMessagesIT extends AbstractBranchReviewIT {
   private static final String FEATURE = "refs/heads/feature/messages-option";
 
   @Test
+  public void disabledPushesDoNotGrowTheBaselines() throws Exception {
+    setConfig(DEFAULT_CONFIG + " publishCommitMessages = false\n");
+    var repo = cloneAs(user);
+    var last = commit(repo, "A", "skipped");
+    assertOk(push(repo, FEATURE), FEATURE);
+    for (String s : new String[] {"B", "C", "D"}) {
+      last = commit(repo, s, "skipped");
+      assertOk(push(repo, FEATURE), FEATURE);
+    }
+    // Each fast-forward makes the previous baseline redundant.
+    assertThat(lifecycle(FEATURE).sourceMessageBaselines).containsExactly(last.name());
+  }
+
+  @Test
   public void skippedHistoryStaysExcludedAfterEnabledRewrite() throws Exception {
     rewriteDoesNotBackfill(false, false);
   }
@@ -201,12 +215,14 @@ public class PublishCommitMessagesIT extends AbstractBranchReviewIT {
     assertState(n, b, 2, 1, 1);
     var c = commit(repo, "C", "enabled later body");
     assertOk(push(repo, FEATURE), FEATURE);
-    assertState(n, c, 3, 2, 2);
+    // C descends from A: A's evidence is redundant and dropped with C's publication.
+    assertState(n, c, 3, 2, 1);
+    assertThat(publicationRefs().get(0).getName()).endsWith("/" + c.name());
     assertThat(comments(n).get(0).message).isEqualTo(originalMessage);
     assertThat(comments(n).get(1).message).contains("enabled later body");
     assertThat(comments(n).get(1).message).doesNotContain("disabled middle body");
     syncViaRest(user, FEATURE, new PostSync.Input());
-    assertState(n, c, 3, 2, 2);
+    assertState(n, c, 3, 2, 1);
   }
 
   private void assertState(int n, RevCommit source, int patchSets, int messages, int markers)

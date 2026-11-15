@@ -449,7 +449,9 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
       assertPublicationBatch(batches, n, amended);
       assertThat(change(n).revisions).hasSize(2);
       assertThat(comments(n)).hasSize(3);
-      assertThat(publicationRefs(n)).hasSize(3);
+      // A's evidence was dropped once B (its descendant) was published; B was rewritten away.
+      assertThat(publicationRefs(n).stream().map(r -> r.getName()).toList())
+          .containsExactly(publicationPrefix(n) + b.name(), publicationPrefix(n) + amended.name());
     }
   }
 
@@ -525,6 +527,41 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
     assertThat(refValue(evidence)).isEqualTo(originalEvidence);
     assertThat(refValue(publicationPrefix(n) + b.name())).isNull();
     assertThat(comments(n)).hasSize(1);
+  }
+
+  @Test
+  public void redundantEvidenceIsDroppedAndTheRestDeletedOnMerge() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var base = repo.getRevWalk().parseCommit(refValue("refs/heads/master"));
+    commit(repo, "A", "first");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    var b = commit(repo, "B", "fast-forward");
+    assertOk(push(repo, FEATURE), FEATURE);
+    // A is an ancestor of B: B's evidence alone excludes both.
+    assertThat(publicationRefs(n).stream().map(r -> r.getName()).toList())
+        .containsExactly(publicationPrefix(n) + b.name());
+
+    repo.reset(base);
+    var c = commit(repo, "C", "rewritten");
+    assertOk(push(repo, "HEAD:" + FEATURE, true), FEATURE);
+    var d = commit(repo, "D", "on the rewrite");
+    assertOk(push(repo, FEATURE), FEATURE);
+    // The rewritten-away history keeps its own evidence; C is covered by D.
+    assertThat(publicationRefs(n).stream().map(r -> r.getName()).toList())
+        .containsExactly(publicationPrefix(n) + b.name(), publicationPrefix(n) + d.name());
+    assertThat(refValue(publicationPrefix(n) + c.name())).isNull();
+    assertThat(comments(n)).hasSize(4);
+
+    String prefix = publicationPrefix(n);
+    approveAndSubmit(n);
+    waitFor(
+        () -> {
+          try (var r = repoManager.openRepository(project)) {
+            return r.getRefDatabase().getRefsByPrefix(prefix).isEmpty();
+          }
+        });
   }
 
   private String publicationPrefix(int number) throws Exception {
