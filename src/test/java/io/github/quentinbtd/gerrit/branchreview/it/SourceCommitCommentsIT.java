@@ -4,6 +4,7 @@
 package io.github.quentinbtd.gerrit.branchreview.it;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.ExtensionRegistry;
 import com.google.gerrit.extensions.api.changes.HashtagsInput;
@@ -562,6 +563,62 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
             return r.getRefDatabase().getRefsByPrefix(prefix).isEmpty();
           }
         });
+  }
+
+  @Test
+  public void recoverySweepsEvidenceLeftByEndedLifecycles() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    var a = commit(repo, "A", "evidence to sweep");
+    assertOk(push(repo, FEATURE), FEATURE);
+    int n = onlyChange();
+    var evidence = refValue(publicationPrefix(n) + a.name());
+    var b = commit(repo, "B", "other evidence value");
+    assertOk(push(repo, FEATURE), FEATURE);
+    var other = refValue(publicationPrefix(n) + b.name());
+    // Evidence of a replaced lifecycle, as left by a crash before its deletion.
+    String replaced =
+        "refs/meta/branch-review/publications/" + n + "/replaced-lifecycle/" + a.name();
+    var recovery =
+        plugin
+            .getSysInjector()
+            .getInstance(io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class);
+    try (var r = repoManager.openRepository(project);
+        var ctx =
+            com.google.gerrit.server.update.context.RefUpdateContext.open(
+                com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.PLUGIN)) {
+      var create = r.updateRef(replaced);
+      create.setNewObjectId(evidence);
+      assertThat(create.update()).isEqualTo(org.eclipse.jgit.lib.RefUpdate.Result.NEW);
+
+      // A deletion that loses its compare-and-swap is reported, and leaves the ref in place.
+      var stale = r.exactRef(replaced);
+      var move = r.updateRef(replaced);
+      move.setNewObjectId(other);
+      move.setForceUpdate(true);
+      assertThat(move.update()).isEqualTo(org.eclipse.jgit.lib.RefUpdate.Result.FORCED);
+      assertThrows(
+          java.io.IOException.class,
+          () -> stateStore.deletePublicationRefs(r, project, List.of(stale)));
+    }
+    assertThat(refValue(replaced)).isEqualTo(other);
+
+    recovery.runOnce();
+    assertThat(refValue(replaced)).isNull();
+    // The active lifecycle keeps its evidence.
+    assertThat(refValue(publicationPrefix(n) + b.name())).isEqualTo(other);
+
+    // A lifecycle closed without its evidence deletion (crash in between): swept as well.
+    String prefix = publicationPrefix(n);
+    try (var r = repoManager.openRepository(project)) {
+      var loaded = stateStore.loadLifecycle(r, FEATURE);
+      loaded.value().status = Lifecycle.Status.CLOSED;
+      stateStore.saveLifecycle(r, project, loaded.value(), loaded.refId(), "simulate crash");
+    }
+    recovery.runOnce();
+    try (var r = repoManager.openRepository(project)) {
+      assertThat(r.getRefDatabase().getRefsByPrefix(prefix)).isEmpty();
+    }
   }
 
   private String publicationPrefix(int number) throws Exception {

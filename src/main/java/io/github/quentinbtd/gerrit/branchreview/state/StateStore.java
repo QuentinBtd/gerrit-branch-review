@@ -248,13 +248,25 @@ public class StateStore {
 
   /**
    * Deletes the source message publication evidence of an ended lifecycle (merged, or closed for a
-   * new one). Idempotent; a concurrent update leaves the remaining refs to the next call.
+   * new one). Idempotent. Evidence left by a failure or a crash is still found and deleted by the
+   * recovery sweep ({@link #deletePublicationRefs}), since the refs themselves are the record.
    */
   public void deletePublications(
       Repository repo, Project.NameKey project, int changeNumber, String lifecycleId)
       throws IOException {
-    List<Ref> refs =
-        repo.getRefDatabase().getRefsByPrefix(publicationPrefix(changeNumber, lifecycleId));
+    deletePublicationRefs(
+        repo,
+        project,
+        repo.getRefDatabase().getRefsByPrefix(publicationPrefix(changeNumber, lifecycleId)));
+  }
+
+  /**
+   * Deletes {@code refs} (publication evidence only) with compare-and-swap on their read values.
+   *
+   * @throws IOException if any ref could not be deleted; the others are deleted regardless.
+   */
+  public void deletePublicationRefs(Repository repo, Project.NameKey project, List<Ref> refs)
+      throws IOException {
     if (refs.isEmpty()) {
       return;
     }
@@ -262,7 +274,12 @@ public class StateStore {
     bru.setAllowNonFastForwards(true);
     bru.setRefLogIdent(serverIdent.get());
     bru.setRefLogMessage("branch-review: lifecycle ended", false);
+    // Not atomic: one stuck ref must not keep the others alive.
+    bru.setAtomic(false);
     for (Ref r : refs) {
+      if (!r.getName().startsWith(PUBLICATIONS)) {
+        throw new IllegalArgumentException("not publication evidence: " + r.getName());
+      }
       bru.addCommand(new ReceiveCommand(r.getObjectId(), ObjectId.zeroId(), r.getName()));
     }
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.PLUGIN);
@@ -270,5 +287,14 @@ public class StateStore {
       bru.execute(rw, NullProgressMonitor.INSTANCE);
     }
     gitRefUpdated.fire(project, bru, null);
+    List<String> failed = new ArrayList<>();
+    for (ReceiveCommand c : bru.getCommands()) {
+      if (c.getResult() != ReceiveCommand.Result.OK) {
+        failed.add(c.getRefName() + " (" + c.getResult() + ")");
+      }
+    }
+    if (!failed.isEmpty()) {
+      throw new IOException("cannot delete " + String.join(", ", failed));
+    }
   }
 }

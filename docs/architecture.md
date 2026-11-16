@@ -178,7 +178,9 @@ ancestors of the new source (excluded through it from now on) and heads whose ob
 pruned. Only rewritten-away histories keep a ref of their own, so a Change usually holds one
 ref per force-push. All the refs of a lifecycle are deleted when it ends (Change merged, or
 lifecycle closed with `--new-lifecycle`); an abandoned Change keeps them until then, since it
-can be restored. Back up and restore publication refs together with NoteDb and lifecycle state;
+can be restored. The ended lifecycle is saved first; if the deletion then fails or the server
+stops in between, each recovery pass deletes the evidence of every lifecycle that is no longer
+active (merged, closed or replaced) in enabled projects. Back up and restore publication refs together with NoteDb and lifecycle state;
 a complete recovery backup must separately preserve any source objects required for selection,
 under the source repository's existing access controls. Watermarks whose source commit is
 missing (a rewritten history pruned by GC) are ignored: commits still reachable from the new
