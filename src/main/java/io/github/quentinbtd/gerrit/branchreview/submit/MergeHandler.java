@@ -180,6 +180,13 @@ public class MergeHandler implements ChangeMergedListener {
         if (changed) {
           stateId = store.saveLifecycle(repo, project, lc, stateId, "change " + number + " merged");
         }
+        try {
+          // The lifecycle has ended: its source message evidence is no longer consulted.
+          store.deletePublications(repo, project, number, lc.id);
+        } catch (IOException e) {
+          log.atWarning().withCause(e).log(
+              "cannot delete source message evidence of %s change %d", project, number);
+        }
         if ("pending".equals(lc.merge.cleanup)
             || ("failed".equals(lc.merge.cleanup)
                 && lc.merge.cleanupAttempts < settings.maxAttempts())) {

@@ -32,6 +32,7 @@ import org.eclipse.jgit.lib.Repository;
  *     deleteSourceBranchOnSubmit = false      # default for every route
  *     syncEditsToBranch = true                # default for every route
  *     workInProgress = true                   # new Changes start WIP (default for every route)
+ *     publishCommitMessages = true            # project-wide source discussion switch
  * [target "refs/heads/dev"]                   # one section per routed target
  *     sourceBranchPattern = refs/heads/dev-*
  *     deleteSourceBranchOnSubmit = true       # optional override
@@ -57,10 +58,18 @@ public final class ConfigParser {
   static final String KEY_DELETE = "deleteSourceBranchOnSubmit";
   static final String KEY_SYNC_EDITS = "syncEditsToBranch";
   static final String KEY_WIP = "workInProgress";
+  static final String KEY_PUBLISH_MESSAGES = "publishCommitMessages";
 
   private static final ImmutableSet<String> KNOWN_KEYS =
       ImmutableSet.of(
-          KEY_ENABLED, KEY_TARGET, KEY_SOURCE, KEY_EXCLUDE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
+          KEY_ENABLED,
+          KEY_TARGET,
+          KEY_SOURCE,
+          KEY_EXCLUDE,
+          KEY_DELETE,
+          KEY_SYNC_EDITS,
+          KEY_WIP,
+          KEY_PUBLISH_MESSAGES);
   private static final ImmutableSet<String> TARGET_KEYS =
       ImmutableSet.of(KEY_ENABLED, KEY_SOURCE, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP);
 
@@ -77,11 +86,13 @@ public final class ConfigParser {
       Optional<Boolean> deleteSourceBranchOnSubmit,
       Optional<Boolean> syncEditsToBranch,
       Optional<Boolean> workInProgress,
+      Optional<Boolean> publishCommitMessages,
       ImmutableMap<String, LayerRoute> targets,
       ImmutableList<String> errors) {
     static Layer empty(String source, List<String> errors) {
       return new Layer(
           source,
+          Optional.empty(),
           Optional.empty(),
           Optional.empty(),
           Optional.empty(),
@@ -103,7 +114,8 @@ public final class ConfigParser {
           && excludePatterns.isEmpty()
           && deleteSourceBranchOnSubmit.isEmpty()
           && syncEditsToBranch.isEmpty()
-          && workInProgress.isEmpty();
+          && workInProgress.isEmpty()
+          && publishCommitMessages.isEmpty();
     }
   }
 
@@ -167,7 +179,9 @@ public final class ConfigParser {
       errors.add("[" + TARGET_SECTION + "] needs the target branch: [target \"refs/heads/...\"]");
     }
     checkKeys(cfg, SECTION, null, KNOWN_KEYS, errors);
-    for (String single : List.of(KEY_ENABLED, KEY_TARGET, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP)) {
+    for (String single :
+        List.of(
+            KEY_ENABLED, KEY_TARGET, KEY_DELETE, KEY_SYNC_EDITS, KEY_WIP, KEY_PUBLISH_MESSAGES)) {
       if (cfg.getStringList(SECTION, null, single).length > 1) {
         errors.add(SECTION + "." + single + " must be set at most once");
       }
@@ -209,6 +223,7 @@ public final class ConfigParser {
         parseBoolean(cfg, SECTION, null, KEY_DELETE, errors),
         parseBoolean(cfg, SECTION, null, KEY_SYNC_EDITS, errors),
         parseBoolean(cfg, SECTION, null, KEY_WIP, errors),
+        parseBoolean(cfg, SECTION, null, KEY_PUBLISH_MESSAGES, errors),
         ImmutableMap.copyOf(targets),
         ImmutableList.copyOf(errors));
   }
@@ -236,6 +251,7 @@ public final class ConfigParser {
     boolean delete = false;
     boolean syncEdits = true;
     boolean wip = true;
+    boolean publishMessages = true;
     Map<String, LayerRoute> routes = new LinkedHashMap<>();
     for (Layer l : rootFirst) {
       enabled = l.enabled().orElse(enabled);
@@ -247,6 +263,7 @@ public final class ConfigParser {
       delete = l.deleteSourceBranchOnSubmit().orElse(delete);
       syncEdits = l.syncEditsToBranch().orElse(syncEdits);
       wip = l.workInProgress().orElse(wip);
+      publishMessages = l.publishCommitMessages().orElse(publishMessages);
       l.targets()
           .forEach((t, r) -> routes.put(t, r.over(routes.getOrDefault(t, LayerRoute.EMPTY))));
     }
@@ -355,6 +372,7 @@ public final class ConfigParser {
         delete,
         syncEdits,
         wip,
+        publishMessages,
         ImmutableList.of());
   }
 

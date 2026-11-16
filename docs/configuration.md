@@ -18,6 +18,7 @@ Example: [`examples/branch-review.config`](../examples/branch-review.config).
     deleteSourceBranchOnSubmit = false
     syncEditsToBranch = true
     workInProgress = true
+    publishCommitMessages = true
 ```
 
 | Key | Required | Default | Meaning |
@@ -29,9 +30,29 @@ Example: [`examples/branch-review.config`](../examples/branch-review.config).
 | `deleteSourceBranchOnSubmit` | no | `false` | Guarded cleanup after Submit (see [architecture](architecture.md#submit-and-cleanup)); grants no permission. Default for every route |
 | `syncEditsToBranch` | no | `true` | Content edits made in Gerrit (inline edit, upload to the Change) are committed back onto the source branch (see [architecture](architecture.md#edits-made-in-gerrit)). `false` keeps the conservative pause. Default for every route |
 | `workInProgress` | no | `true` | Whether a **new** Change starts Work in Progress; `false` creates it ready for review (reviewers and watchers are notified as for any new Change). Default for every route |
+| `publishCommitMessages` | no | `true` | Project-wide switch for new source commit discussion messages and their publication proofs; `false` keeps squash/patch-set synchronization enabled. Not a per-route setting |
 
 An enabled file needs at least one route: the default route (`targetBranch` with
 `sourceBranchPattern`), one or more `[target]` sections, or both.
+
+`publishCommitMessages = false` is **not** `enabled = false`: normal Change creation,
+patch sets, squash content, synchronization and other Gerrit messages continue unchanged.
+Only new source commit discussion messages and their publication refs are skipped; existing
+messages and refs are neither removed nor changed. Disabled discussion does not read or validate
+publication markers, so missing/corrupt markers cannot block otherwise valid synchronization.
+The synchronized source baseline continues advancing, including equivalent-content/no-op and
+existing-Change `EMPTY` outcomes. Re-enabling does not catch up commits already synchronized
+while disabled: only subsequent fresh commits are eligible, and repeated sync does not duplicate
+discussion. Failed or blocked synchronization is not considered synchronized history.
+
+The switch inherits from All-Projects through parents to the child like other scalar keys.
+A child can set either `true` or `false`; omission inherits (default `true` if unset everywhere).
+For example, keep the inherited plugin routes active but disable new source discussion:
+
+```ini
+[branchReview]
+    publishCommitMessages = false
+```
 
 ### Several target branches: `[target "<branch>"]`
 

@@ -27,10 +27,12 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -38,6 +40,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -118,6 +121,38 @@ public class RecoveryService implements LifecycleListener {
     }
   }
 
+  /**
+   * Deletes the source message evidence of every lifecycle that is no longer active (merged,
+   * closed, replaced or gone). The ended lifecycle is saved before its evidence is deleted, so a
+   * crash or a failed deletion in between leaves refs that only this sweep can find.
+   */
+  private void sweepPublications(
+      Repository repo, Project.NameKey project, List<Ref> evidence, List<Lifecycle> lifecycles) {
+    if (evidence.isEmpty()) {
+      return;
+    }
+    Set<String> active = new HashSet<>();
+    for (Lifecycle lc : lifecycles) {
+      if (lc.isActive()) {
+        active.add(lc.id);
+      }
+    }
+    List<Ref> ended = new ArrayList<>();
+    for (Ref r : evidence) {
+      // publications/<change>/<lifecycle>/<source>
+      String[] parts = r.getName().substring(StateStore.PUBLICATIONS.length()).split("/", -1);
+      if (parts.length == 3 && !active.contains(parts[1])) {
+        ended.add(r);
+      }
+    }
+    try {
+      store.deletePublicationRefs(repo, project, ended);
+    } catch (IOException | RuntimeException e) {
+      log.atWarning().withCause(e).log(
+          "cannot delete ended source message evidence of %s; retried next pass", project);
+    }
+  }
+
   /** A unit of recovery work; {@code admit} returns whether the executor accepted it. */
   private record Work(String key, BooleanSupplier admit) {}
 
@@ -144,7 +179,12 @@ public class RecoveryService implements LifecycleListener {
       try (Repository repo = repoManager.openRepository(project);
           ObjectInserter ins = repo.newObjectInserter();
           RevWalk rw = new RevWalk(ins.newReader())) {
-        for (Lifecycle lc : store.listLifecycles(repo)) {
+        // Evidence is listed before the lifecycles: a ref created meanwhile belongs to a lifecycle
+        // that was saved before it, so it is never mistaken for one that ended.
+        List<Ref> evidence = repo.getRefDatabase().getRefsByPrefix(StateStore.PUBLICATIONS);
+        List<Lifecycle> lifecycles = store.listLifecycles(repo);
+        sweepPublications(repo, project, evidence, lifecycles);
+        for (Lifecycle lc : lifecycles) {
           String key = project.get() + '\0' + lc.sourceRef;
           int change = lc.changeNumber;
           if (lc.status == Lifecycle.Status.MERGED) {

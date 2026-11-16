@@ -25,9 +25,11 @@ import java.util.List;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
 import org.eclipse.jgit.dircache.DirCacheEntry;
+import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -37,6 +39,7 @@ import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
 /**
@@ -48,6 +51,9 @@ import org.eclipse.jgit.treewalk.TreeWalk;
  *       top of the previous one, so the ref history is an audit log.
  *   <li>{@code refs/meta/branch-review/changes/<nn>/<changeNumber>}: the {@link ChangeLink} of a
  *       Change created by the plugin.
+ *   <li>{@code refs/meta/branch-review/publications/<changeNumber>/<lifecycleId>/<sourceId>}:
+ *       evidence that the source commit messages up to {@code sourceId} were published on the
+ *       Change; deleted when the lifecycle ends.
  * </ul>
  *
  * <p>Every write is a compare-and-swap against the ref value that was read, so concurrent writers
@@ -57,6 +63,7 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 public class StateStore {
   public static final String SOURCES = BranchReviewConfig.STATE_NAMESPACE + "sources/";
   public static final String CHANGES = BranchReviewConfig.STATE_NAMESPACE + "changes/";
+  public static final String PUBLICATIONS = BranchReviewConfig.STATE_NAMESPACE + "publications/";
   private static final String LIFECYCLE_FILE = "lifecycle.json";
   private static final String LINK_FILE = "change.json";
 
@@ -232,6 +239,62 @@ public class StateStore {
       case LOCK_FAILURE, REJECTED, REJECTED_CURRENT_BRANCH, NOT_ATTEMPTED ->
           throw new ConcurrentUpdateException(ref);
       default -> throw new IOException("cannot update " + ref + ": " + res);
+    }
+  }
+
+  public static String publicationPrefix(int changeNumber, String lifecycleId) {
+    return PUBLICATIONS + changeNumber + "/" + lifecycleId + "/";
+  }
+
+  /**
+   * Deletes the source message publication evidence of an ended lifecycle (merged, or closed for a
+   * new one). Idempotent. Evidence left by a failure or a crash is still found and deleted by the
+   * recovery sweep ({@link #deletePublicationRefs}), since the refs themselves are the record.
+   */
+  public void deletePublications(
+      Repository repo, Project.NameKey project, int changeNumber, String lifecycleId)
+      throws IOException {
+    deletePublicationRefs(
+        repo,
+        project,
+        repo.getRefDatabase().getRefsByPrefix(publicationPrefix(changeNumber, lifecycleId)));
+  }
+
+  /**
+   * Deletes {@code refs} (publication evidence only) with compare-and-swap on their read values.
+   *
+   * @throws IOException if any ref could not be deleted; the others are deleted regardless.
+   */
+  public void deletePublicationRefs(Repository repo, Project.NameKey project, List<Ref> refs)
+      throws IOException {
+    if (refs.isEmpty()) {
+      return;
+    }
+    BatchRefUpdate bru = repo.getRefDatabase().newBatchUpdate();
+    bru.setAllowNonFastForwards(true);
+    bru.setRefLogIdent(serverIdent.get());
+    bru.setRefLogMessage("branch-review: lifecycle ended", false);
+    // Not atomic: one stuck ref must not keep the others alive.
+    bru.setAtomic(false);
+    for (Ref r : refs) {
+      if (!r.getName().startsWith(PUBLICATIONS)) {
+        throw new IllegalArgumentException("not publication evidence: " + r.getName());
+      }
+      bru.addCommand(new ReceiveCommand(r.getObjectId(), ObjectId.zeroId(), r.getName()));
+    }
+    try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.PLUGIN);
+        RevWalk rw = new RevWalk(repo)) {
+      bru.execute(rw, NullProgressMonitor.INSTANCE);
+    }
+    gitRefUpdated.fire(project, bru, null);
+    List<String> failed = new ArrayList<>();
+    for (ReceiveCommand c : bru.getCommands()) {
+      if (c.getResult() != ReceiveCommand.Result.OK) {
+        failed.add(c.getRefName() + " (" + c.getResult() + ")");
+      }
+    }
+    if (!failed.isEmpty()) {
+      throw new IOException("cannot delete " + String.join(", ", failed));
     }
   }
 }
