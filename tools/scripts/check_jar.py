@@ -11,7 +11,12 @@ REQUIRED = {
     "Gerrit-Module": "io.github.quentinbtd.gerrit.branchreview.Module",
     "Gerrit-SshModule": "io.github.quentinbtd.gerrit.branchreview.SshModule",
 }
-ALLOWED_PREFIXES = ("io/github/quentinbtd/gerrit/branchreview/", "META-INF/", "Documentation/")
+ALLOWED_PREFIXES = (
+    "io/github/quentinbtd/gerrit/branchreview/",
+    "META-INF/",
+    "Documentation/",
+    "static/",
+)
 ALLOWED_FILES = {
     "build-data.properties",
     "LICENSE",

@@ -20,6 +20,7 @@ recorded in [docs/adr](adr/).
 | `MergeHandler` | `ChangeMergedListener` | Closes lifecycles, optional guarded source deletion |
 | `RecoveryService` | `LifecycleListener` | Retries accepted-but-unsynchronized work and pending cleanups |
 | `BranchStatus` (REST `branch-review~status` / `~sync`, SSH `branch-review status` / `sync`) | REST and SSH modules | Permission-filtered diagnosis and explicit, idempotent repair |
+| `SourceBranchAttribute`, `static/branch-review.js` | `ChangePluginDefinedInfoFactory`, `WebUiPlugin` (`change-metadata-item`) | Adds `source_branch` (read from the Change link, only for users who can read that branch) to `ChangeInfo.plugins` and shows it as a "Source branch" row on the change page |
 
 ## Synchronization flow and transaction boundaries
 
