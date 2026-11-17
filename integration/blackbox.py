@@ -33,6 +33,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LABEL = "io.github.quentinbtd.branch-review.it"
 PREFIX = "/r"  # Exercise canonical URLs below a path prefix.
 PASSWORD = "secret-" + uuid.uuid4().hex[:12]
+# Browser for the UI check; integration/ui/package-lock.json pins playwright-core to the same version.
+PLAYWRIGHT_IMAGE = (
+    "mcr.microsoft.com/playwright:v1.64.1-noble"
+    "@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f"
+)
 
 
 def sh(cmd, check=True, env=None, cwd=None, timeout=300):
@@ -88,6 +93,39 @@ class Gerrit:
         sh(["docker", "cp", self.jar, self.name + ":/var/gerrit/plugins/branch-review.jar"])
         sh(["docker", "start", self.name])
         self.wait_ready()
+
+    def ui_check(self, tmp, *args):
+        """Runs integration/ui/check.mjs in the Playwright image, inside this container's network."""
+        work = tempfile.mkdtemp(dir=tmp, prefix="ui-")
+        for f in ("package.json", "package-lock.json", "check.mjs"):
+            shutil.copy(os.path.join(HERE, "ui", f), work)
+        version = PLAYWRIGHT_IMAGE.split(":v", 1)[1].split("-", 1)[0]
+        sh(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "container:" + self.name,
+                "--user",
+                "%d:%d" % (os.getuid(), os.getgid()),
+                "-e",
+                "HOME=/tmp",
+                "-v",
+                work + ":/ui",
+                "-w",
+                "/ui",
+                PLAYWRIGHT_IMAGE,
+                "sh",
+                "-c",
+                'npm ci --ignore-scripts --no-audit --no-fund >/dev/null && node check.mjs "$@"',
+                "check",
+                "http://localhost:8080" + PREFIX,
+                *args,
+                version,
+            ],
+            timeout=900,
+        )
 
     def restart(self):
         sh(["docker", "restart", self.name], timeout=300)
@@ -567,6 +605,17 @@ class BlackBox(unittest.TestCase):
             "refs/heads/feature/x: updated Change %d with patch set 2 (WIP)" % n,
             GitClient.plugin_lines(out),
         )
+
+    def test_ui_shows_source_branch_and_clears_it(self):
+        p = self.new_project()
+        c = self.feature_client(p, self.alice, "http")
+        c.commit("ui.txt", "ui\n", "ui commit")
+        c.push("origin", "feature/x")
+        n = self.changes(p)[0]["_number"]
+        _, plain = self.gerrit.rest(
+            "POST", "/changes/", {"project": p, "branch": "master", "subject": "Plain change"}
+        )
+        self.gerrit.ui_check(self.tmp, p, str(n), str(plain["_number"]), "Plain change", "feature/x")
 
     def test_plugin_identity(self):
         _, plugins = self.gerrit.rest("GET", "/plugins/")

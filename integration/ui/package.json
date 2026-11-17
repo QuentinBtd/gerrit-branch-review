@@ -1,0 +1,9 @@
+{
+  "name": "branch-review-ui-check",
+  "private": true,
+  "description": "Browser check of the change-page source branch row, run by integration/blackbox.py",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  }
+}
