@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.4.0...v0.5.0) (2026-11-16)
+
+
+### Features
+
+* **config:** make source commit comments configurable ([8ba452e](https://github.com/QuentinBtd/gerrit-branch-review/commit/8ba452ea5de28bd4be3bb9ad31fdc6d83e458e91))
+* **sync:** publish source commit messages in change discussions ([8976a8b](https://github.com/QuentinBtd/gerrit-branch-review/commit/8976a8b2fec1486d52960468b6e1fec80d029320))
+
+
+### Bug Fixes
+
+* preserve skipped discussion baselines and WIP notifications ([6624b97](https://github.com/QuentinBtd/gerrit-branch-review/commit/6624b975317b07502b61b3188c1d7d162c12c712))
+* **recovery:** sweep publication evidence of ended lifecycles ([91a9c17](https://github.com/QuentinBtd/gerrit-branch-review/commit/91a9c1745ba699fe9b20157393a2580655858f58))
+* **sync:** bound source message evidence and baselines ([0d0892d](https://github.com/QuentinBtd/gerrit-branch-review/commit/0d0892dfc6abcbdbe573f43c4225fd70e9ed0d64))
+* **sync:** never block synchronization on source commit discussions ([e349bf5](https://github.com/QuentinBtd/gerrit-branch-review/commit/e349bf5f569af5d9e91d664757571cc8f9ac9b0b))
+
 ## [0.4.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.3.0...v0.4.0) (2026-10-23)
 
 
