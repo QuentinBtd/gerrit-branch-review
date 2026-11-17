@@ -66,11 +66,10 @@
       "customType": "regex",
       "description": "Playwright image pin in the black-box tests",
       "managerFilePatterns": ["/^integration/blackbox\\.py$/"],
-      "matchStrings": ["\"mcr\\.microsoft\\.com/playwright:v(?<currentValue>[0-9.]+)-noble\"\\s*\"@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "matchStrings": ["\"mcr\\.microsoft\\.com/playwright:(?<currentValue>v[0-9.]+-noble)\"\\s*\"@(?<currentDigest>sha256:[a-f0-9]{64})\""],
       "depNameTemplate": "mcr.microsoft.com/playwright",
       "datasourceTemplate": "docker",
-      "extractVersionTemplate": "^v(?<version>[0-9.]+)-noble$",
-      "versioningTemplate": "semver"
+      "versioningTemplate": "docker"
     },
     {
       // Minimum mise version in .mise.toml; the CI mise version is the mise-action "version"
