@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.7.0...v0.7.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **ui:** reload the UI script after a plugin upgrade ([a9a852f](https://github.com/QuentinBtd/gerrit-branch-review/commit/a9a852fec208d1c77b00997870aafeea6f2ce60c))
+* **ui:** reload the UI script after a plugin upgrade ([bd7bc69](https://github.com/QuentinBtd/gerrit-branch-review/commit/bd7bc6993c6cb4bee247ecb37464bf42ee9e70f7))
+
 ## [0.7.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.6.0...v0.7.0) (2026-11-18)
 
 
