@@ -22,7 +22,7 @@ published API artifacts.
 - Java 21 language level and runtime (`remotejdk_21`), matching every supported Gerrit; local
   tools use Temurin 21.0.12+8 from mise.
 - Release assets: `branch-review-<version>-gerrit-<series>.jar`, one per series, all carrying
-  `Gerrit-PluginName: branch-review`, `Implementation-Version: <version>` and
+  `Gerrit-PluginName: branch-review`, `Implementation-Version: v<version>` and
   `Gerrit-ApiVersion: <exact Gerrit release>`. The series suffix is a classifier, not a version.
 
 An in-tree build was not needed: the acceptance framework from Maven supports full in-process
