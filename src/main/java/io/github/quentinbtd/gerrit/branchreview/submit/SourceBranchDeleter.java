@@ -27,9 +27,10 @@ import org.eclipse.jgit.transport.ReceiveCommand;
 
 /**
  * Deletes a source branch on behalf of a user, only if it still points at an expected commit: the
- * user needs Gerrit's {@code delete} permission, Gerrit's ref operation validators must accept the
- * deletion, and the ref update is a compare-and-swap on that commit, so commits pushed meanwhile
- * are never lost. Used by the cleanup after Submit and by the change-page action.
+ * project state must permit writes (not read-only), the user needs Gerrit's {@code delete}
+ * permission, Gerrit's ref operation validators must accept the deletion, and the ref update is a
+ * compare-and-swap on that commit, so commits pushed meanwhile are never lost. Used by the cleanup
+ * after Submit and by the change-page action.
  */
 @Singleton
 public class SourceBranchDeleter {
@@ -64,6 +65,11 @@ public class SourceBranchDeleter {
     this.gitRefUpdated = gitRefUpdated;
   }
 
+  /** Whether the project's state permits writes, as Gerrit's own branch deletion requires. */
+  public boolean writable(Project.NameKey project) {
+    return projectCache.get(project).map(ProjectState::statePermitsWrite).orElse(false);
+  }
+
   /** Whether {@code user} holds Gerrit's {@code delete} permission on {@code ref}. */
   public boolean mayDelete(IdentifiedUser user, Project.NameKey project, String ref) {
     try {
@@ -82,6 +88,9 @@ public class SourceBranchDeleter {
       IdentifiedUser user,
       String reflogMessage)
       throws IOException {
+    if (!writable(project)) {
+      return new Result(Outcome.REJECTED, "project state does not permit write");
+    }
     if (!mayDelete(user, project, ref)) {
       return new Result(Outcome.NO_PERMISSION, null);
     }

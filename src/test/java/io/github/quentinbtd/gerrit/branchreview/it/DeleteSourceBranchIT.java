@@ -8,10 +8,18 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.RestSession;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.client.ListChangesOption;
+import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.inject.Inject;
 import io.github.quentinbtd.gerrit.branchreview.state.Lifecycle;
+import io.github.quentinbtd.gerrit.branchreview.sync.SyncService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -96,6 +104,45 @@ public class DeleteSourceBranchIT extends AbstractBranchReviewIT {
     r.assertConflict();
     assertThat(r.getEntityContent()).contains("has commits that are not in this Change");
     assertThat(refValue(FEATURE)).isEqualTo(newer);
+  }
+
+  @Test
+  public void refusedInAReadOnlyProject() throws Exception {
+    gApi.changes().id(project.get(), number).abandon();
+    ConfigInput in = new ConfigInput();
+    in.state = ProjectState.READ_ONLY;
+    gApi.projects().name(project.get()).config(in);
+
+    assertThat(offered()).isFalse();
+    RestResponse r = delete(adminRestSession);
+    r.assertConflict();
+    assertThat(r.getEntityContent()).contains("does not permit write");
+    assertThat(refValue(FEATURE)).isEqualTo(tip);
+  }
+
+  @Test
+  public void refusedWhenTheChangeIsRestoredWhileTheDeletionWaits() throws Exception {
+    gApi.changes().id(project.get(), number).abandon();
+    Lock lock = plugin.getSysInjector().getInstance(SyncService.class).lockFor(project, FEATURE);
+    ExecutorService other = Executors.newSingleThreadExecutor();
+    Future<RestResponse> pending;
+    lock.lock();
+    try {
+      pending = other.submit(() -> delete(adminRestSession));
+      // The deletion passed its first check and now waits for the branch lock.
+      waitFor(() -> ((ReentrantLock) lock).hasQueuedThreads());
+      gApi.changes().id(project.get(), number).restore();
+    } finally {
+      lock.unlock();
+    }
+    try {
+      RestResponse r = pending.get();
+      r.assertConflict();
+      assertThat(r.getEntityContent()).contains("still open");
+    } finally {
+      other.shutdown();
+    }
+    assertThat(refValue(FEATURE)).isEqualTo(tip);
   }
 
   @Test

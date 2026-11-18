@@ -4,6 +4,7 @@
 package io.github.quentinbtd.gerrit.branchreview.api;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -16,6 +17,7 @@ import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -67,6 +69,7 @@ public class DeleteSourceBranch
   private final ServerSettings settings;
   private final BatchUpdate.Factory batchUpdateFactory;
   private final ChangeMessagesUtil messages;
+  private final ChangeNotes.Factory notesFactory;
 
   @Inject
   DeleteSourceBranch(
@@ -77,7 +80,8 @@ public class DeleteSourceBranch
       PermissionBackend permissionBackend,
       ServerSettings settings,
       BatchUpdate.Factory batchUpdateFactory,
-      ChangeMessagesUtil messages) {
+      ChangeMessagesUtil messages,
+      ChangeNotes.Factory notesFactory) {
     this.repoManager = repoManager;
     this.store = store;
     this.syncService = syncService;
@@ -86,6 +90,7 @@ public class DeleteSourceBranch
     this.settings = settings;
     this.batchUpdateFactory = batchUpdateFactory;
     this.messages = messages;
+    this.notesFactory = notesFactory;
   }
 
   @Override
@@ -95,7 +100,7 @@ public class DeleteSourceBranch
       return d;
     }
     try (Repository repo = repoManager.openRepository(rsrc.getProject())) {
-      Target t = resolve(repo, rsrc);
+      Target t = resolve(repo, rsrc, rsrc.getChange());
       return d.setTitle("Delete " + t.ref() + " now that this Change is closed")
           .setVisible(
               deleter.mayDelete(rsrc.getUser().asIdentifiedUser(), rsrc.getProject(), t.ref()));
@@ -117,11 +122,12 @@ public class DeleteSourceBranch
     int number = rsrc.getId().get();
     Target t;
     try (Repository repo = repoManager.openRepository(project)) {
-      Lock lock = syncService.lockFor(project, resolve(repo, rsrc).ref());
+      Lock lock = syncService.lockFor(project, resolve(repo, rsrc, rsrc.getChange()).ref());
       lock.lock();
       try {
-        // Again under the branch lock: a push may have been synchronized meanwhile.
-        t = resolve(repo, rsrc);
+        // Again under the branch lock, from stored state: meanwhile a push may have been
+        // synchronized or the Change restored (the request's Change is a snapshot).
+        t = resolve(repo, rsrc, notesFactory.createChecked(project, rsrc.getId()).getChange());
         SourceBranchDeleter.Result r =
             deleter.delete(
                 repo,
@@ -150,11 +156,14 @@ public class DeleteSourceBranch
   }
 
   /** The branch to delete and the commit it must point at, or why the action does not apply. */
-  private Target resolve(Repository repo, ChangeResource rsrc) throws Exception {
+  private Target resolve(Repository repo, ChangeResource rsrc, Change change) throws Exception {
     if (settings.emergencyDisabled()) {
       throw new ResourceConflictException("branch-review is disabled");
     }
-    if (!rsrc.getChange().getStatus().isClosed()) {
+    if (!deleter.writable(rsrc.getProject())) {
+      throw new ResourceConflictException("project state does not permit write");
+    }
+    if (!change.getStatus().isClosed()) {
       throw new ResourceConflictException("the Change is still open");
     }
     StateStore.Loaded<ChangeLink> link = store.loadLink(repo, rsrc.getId().get());
