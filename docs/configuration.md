@@ -260,7 +260,7 @@ The pusher needs normal branch permissions **and** normal review permissions:
 ```
 
 `delete` (or force push) on the source branch is needed by the *submitter* for the optional
-cleanup. Forge Author/Committer are not needed for synthetic commits (they use the pusher's own
+cleanup, and by anyone who uses the "Delete source branch" action of a closed Change. Forge Author/Committer are not needed for synthetic commits (they use the pusher's own
 identity) but the site's usual rules still apply to the source commits pushed to the branch.
 Other site policies (Signed-off-by required, commit validators, submit requirements, labels)
 apply to synthetic commits and Changes unchanged.

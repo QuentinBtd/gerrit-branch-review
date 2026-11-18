@@ -1,8 +1,9 @@
 // Copyright (C) 2026 The branch-review Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Shows the source branch of a branch-review Change in the change-page metadata block. The value
-// comes from ChangeInfo.plugins, filled by SourceBranchAttribute; other Changes show nothing.
+// Shows the source branch of a branch-review Change in the change-page metadata block (from
+// ChangeInfo.plugins, filled by SourceBranchAttribute; other Changes show nothing), and runs the
+// "Delete source branch" change action that DeleteSourceBranch offers on closed Changes.
 Gerrit.install((plugin) => {
   const name = plugin.getPluginName();
 
@@ -29,11 +30,13 @@ Gerrit.install((plugin) => {
       const value = document.createElement('span');
       value.className = 'value';
       const branch = ref.replace(/^refs\/heads\//, '');
-      // Link to the repository browser (e.g. gitiles) while the branch exists, else plain text.
+      // Link to the repository browser (e.g. gitiles) while the branch exists, else plain text;
+      // struck through once the branch is deleted.
       const url = info.source_branch_url;
       const label = document.createElement(url ? 'a' : 'span');
       if (url) label.href = url;
-      label.title = ref;
+      label.title = info.source_branch_deleted ? `${ref} (deleted)` : ref;
+      if (info.source_branch_deleted) label.style.textDecoration = 'line-through';
       label.textContent = branch;
       // Gerrit's own copy button, as next to the commit SHA.
       const copy = document.createElement('gr-copy-clipboard');
@@ -74,12 +77,44 @@ Gerrit.install((plugin) => {
     const ok = document.execCommand('copy');
     area.remove();
     focused?.focus(); // select() moved focus to the textarea
-    const message = ok ? 'Branch name copied to clipboard' : 'Could not copy the branch name';
+    toast(source, ok ? 'Branch name copied to clipboard' : 'Could not copy the branch name');
+  }
+
+  function toast(source, message) {
     // Gerrit shows this event as its usual toast.
     source.dispatchEvent(
       new CustomEvent('show-alert', {detail: {message}, bubbles: true, composed: true}),
     );
   }
+
+  // Gerrit renders plugin change actions but leaves running them to the plugin.
+  const deleteAction = `${name}~delete-source-branch`;
+  let shownChange;
+  async function deleteSourceBranch(e) {
+    const change = shownChange;
+    const node = e.detail?.node ?? document.body;
+    const info = (change?.plugins || []).find((p) => p.name === name);
+    const branch = (info?.source_branch ?? 'the source branch').replace(/^refs\/heads\//, '');
+    if (!window.confirm(`Delete the branch ${branch}? This cannot be undone.`)) return;
+    try {
+      await plugin
+        .restApi()
+        .post(
+          `/changes/${encodeURIComponent(change.project)}~${change._number}/${deleteAction}`,
+          {},
+        );
+      toast(node, `Deleted source branch ${branch}`);
+      // Reload the Change: the action and the branch link go away.
+      node.dispatchEvent(new CustomEvent('reload', {detail: {}, bubbles: true, composed: true}));
+    } catch (err) {
+      toast(node, `Could not delete ${branch}: ${err?.message ?? err}`);
+    }
+  }
+  plugin.on('showchange', (change) => {
+    shownChange = change;
+    // The same function object: re-adding it on every Change view is a no-op.
+    plugin.changeActions().addTapListener(deleteAction, deleteSourceBranch);
+  });
 
   const tag = 'branch-review-source-branch';
   if (!customElements.get(tag)) customElements.define(tag, SourceBranchItem);
