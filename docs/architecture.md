@@ -275,7 +275,7 @@ See [ADR 0004](adr/0004-submit-policy.md) for the submit guard. After Gerrit rep
 3. it still points at exactly the submitted source commit;
 4. the submitting user holds `delete` (or force push) on it;
 5. Gerrit's ref operation validators (e.g. branch-protection plugins) accept the deletion by that
-   user.
+   user, and the project state permits writes (not read-only).
 
 Deletion is a compare-and-swap on that commit as the server, recorded with the submitter's
 account in the ref-updated event. Repeated merge events are idempotent; failures never affect
@@ -288,7 +288,8 @@ can therefore never exceed what the submitter could have done by hand.
 "Delete source branch" change action (overflow menu) on closed Changes, independently of
 `deleteSourceBranchOnSubmit`. It is shown, and accepted, only when:
 
-1. the Change is merged or abandoned and was created by the plugin;
+1. the Change is merged or abandoned (re-read under the branch lock) and was created by the
+   plugin, in a project whose state permits writes;
 2. the user can read and delete the branch (`delete` or force push), and Gerrit's ref operation
    validators accept the deletion by that user;
 3. the branch still belongs to the Change's lifecycle and points at exactly the source commit
