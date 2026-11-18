@@ -29,40 +29,26 @@ Gerrit.install((plugin) => {
       const value = document.createElement('span');
       value.className = 'value';
       const branch = ref.replace(/^refs\/heads\//, '');
-      // A text-styled button: keyboard and screen-reader support come with the element.
-      const copy = document.createElement('button');
-      copy.type = 'button';
-      copy.textContent = branch;
-      copy.title = `${ref} (click to copy)`;
-      // Reset only the button's look; `all: unset` would also drop the focus outline.
-      copy.style.cssText =
-        'background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;' +
-        ' text-align: inherit; cursor: pointer; overflow-wrap: anywhere;';
-      copy.addEventListener('click', () => this.copy(branch, copy));
-      value.append(copy);
+      // Link to the repository browser (e.g. gitiles) while the branch exists, else plain text.
+      const url = info.source_branch_url;
+      const label = document.createElement(url ? 'a' : 'span');
+      if (url) label.href = url;
+      label.title = ref;
+      label.textContent = branch;
+      // Gerrit's own copy button, as next to the commit SHA.
+      const copy = document.createElement('gr-copy-clipboard');
+      copy.text = branch;
+      copy.hideInput = true;
+      copy.hasTooltip = true;
+      copy.buttonTitle = 'Copy branch name to clipboard';
+      copy.copyTargetName = 'Branch name';
+      // Keep name and button on one line, as gr-commit-info does for the SHA.
+      const line = document.createElement('span');
+      line.style.cssText = 'display: inline-flex; align-items: center; gap: var(--spacing-s, 4px);';
+      line.append(label, copy);
+      value.append(line);
       section.append(title, value);
       this.append(section);
-    }
-
-    async copy(text, button) {
-      let message = 'Branch name copied to clipboard';
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // No async clipboard outside secure contexts (plain-HTTP Gerrit): legacy fallback.
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.style.cssText = 'position: fixed; opacity: 0;';
-        document.body.append(area);
-        area.select();
-        if (!document.execCommand('copy')) message = 'Could not copy the branch name';
-        area.remove();
-        button.focus(); // select() moved focus to the textarea
-      }
-      // Gerrit shows this event as its usual toast.
-      this.dispatchEvent(
-        new CustomEvent('show-alert', {detail: {message}, bubbles: true, composed: true}),
-      );
     }
   }
 

@@ -9,13 +9,19 @@ import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.b
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.RestSession;
 import com.google.gerrit.entities.Permission;
+import com.google.gerrit.extensions.common.WebLinkInfo;
+import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.extensions.webui.BranchWebLink;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.inject.Inject;
 import org.junit.Test;
 
 public class SourceBranchUiIT extends AbstractBranchReviewIT {
   private static final String FEATURE = "refs/heads/feature/ui-source";
+
+  @Inject private DynamicSet<BranchWebLink> branchWebLinks;
 
   private JsonObject detail(int number) throws Exception {
     return detail(adminRestSession, number);
@@ -39,6 +45,30 @@ public class SourceBranchUiIT extends AbstractBranchReviewIT {
     JsonObject info = plugins.get(0).getAsJsonObject();
     assertThat(info.get("name").getAsString()).isEqualTo("branch-review");
     assertThat(info.get("source_branch").getAsString()).isEqualTo(FEATURE);
+  }
+
+  @Test
+  public void linksToTheRepositoryBrowserWhileTheBranchExists() throws Exception {
+    enable();
+    var repo = cloneAs(user);
+    commits(repo, "a", 1);
+    push(repo, FEATURE);
+    int number = onlyChange();
+    BranchWebLink browser =
+        (project, branch) -> new WebLinkInfo("browse", null, "/browse/" + project + "/" + branch);
+    var handle = branchWebLinks.add("branch-review-test", browser);
+    try {
+      JsonObject info = detail(number).getAsJsonArray("plugins").get(0).getAsJsonObject();
+      assertThat(info.get("source_branch_url").getAsString())
+          .isEqualTo("/browse/" + project.get() + "/" + FEATURE);
+
+      gApi.projects().name(project.get()).branch(FEATURE).delete();
+      info = detail(number).getAsJsonArray("plugins").get(0).getAsJsonObject();
+      assertThat(info.get("source_branch").getAsString()).isEqualTo(FEATURE);
+      assertThat(info.has("source_branch_url")).isFalse();
+    } finally {
+      handle.remove();
+    }
   }
 
   @Test

@@ -1,9 +1,9 @@
 // Copyright (C) 2026 The branch-review Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Browser check of the change-page "Source branch" row (display, click-to-copy, plain-HTTP copy
-// fallback from the keyboard, removal on an ordinary Change), run inside the pinned Playwright image by integration/blackbox.py. Exits
-// non-zero with a message on the first failed expectation.
+// Browser check of the change-page "Source branch" row (display, gitiles link, copy button,
+// removal on an ordinary Change), run inside the pinned Playwright image by
+// integration/blackbox.py. Exits non-zero with a message on the first failed expectation.
 //
 // Usage: node check.mjs BASE_URL PROJECT BRANCH_CHANGE PLAIN_CHANGE PLAIN_SUBJECT BRANCH PLAYWRIGHT_VERSION
 import { createRequire } from 'node:module';
@@ -29,34 +29,23 @@ try {
   const shown = await row.textContent();
   if (shown !== branch) throw new Error(`row shows ${JSON.stringify(shown)}, expected ${branch}`);
 
-  // Clicking the name copies it and shows Gerrit's toast.
+  // The name links to the branch in gitiles (bundled with the official image).
+  const link = row.locator('a');
+  const href = await link.evaluate((a) => a.href);
+  const expected = `/plugins/gitiles/${project}/+/refs/heads/${branch}`;
+  if (!href.endsWith(expected)) throw new Error(`link is ${href}, expected ...${expected}`);
+  const browse = await page.request.get(href);
+  if (!browse.ok()) throw new Error(`gitiles link answered ${browse.status()}`);
+
+  // Gerrit's copy button next to the name copies the short branch name.
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
     origin: new URL(base).origin,
   });
-  await row.locator('button').click();
-  await page.getByText('Branch name copied to clipboard').first().waitFor({ timeout: 15_000 });
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  if (copied !== branch) throw new Error(`copied ${JSON.stringify(copied)}, expected ${branch}`);
-
-  // Plain-HTTP fallback (no async clipboard), from the keyboard: the copy still works, focus
-  // goes back to the button and its focus outline is visible.
-  const button = row.locator('button');
-  await page.evaluate(async () => {
-    await navigator.clipboard.writeText('');
-    navigator.clipboard.writeText = () => Promise.reject(new Error('insecure context'));
-  });
-  await button.focus();
-  await page.keyboard.press('Enter');
+  await row.locator('gr-copy-clipboard gr-button').click();
   const readClipboard = () => page.evaluate(() => navigator.clipboard.readText());
   for (let i = 0; i < 50 && (await readClipboard()) !== branch; i++) await page.waitForTimeout(100);
-  const fallback = await readClipboard();
-  if (fallback !== branch) throw new Error(`fallback copied ${JSON.stringify(fallback)}`);
-  const focus = await button.evaluate((b) => ({
-    kept: b.getRootNode().activeElement === b,
-    outline: getComputedStyle(b).outlineStyle,
-  }));
-  if (!focus.kept) throw new Error('the fallback copy did not give focus back to the button');
-  if (focus.outline === 'none') throw new Error('the focused button has no visible outline');
+  const copied = await readClipboard();
+  if (copied !== branch) throw new Error(`copied ${JSON.stringify(copied)}, expected ${branch}`);
 
   // Follow a link inside the app: the router reuses the change view, which is where a stale row
   // from the previous Change would survive. The marker proves no full page load happened.

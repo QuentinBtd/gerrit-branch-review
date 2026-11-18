@@ -35,7 +35,7 @@ Evidence, commands and dates: [test-evidence.md](test-evidence.md).
   `MERGE_ALWAYS` is rejected at Submit. With whole-topic Submit, reviews that would need a merge
   commit under `MERGE_IF_NECESSARY` are rejected; submit them separately.
 - Git clients must support side-band (all maintained Git versions do) to see push output.
-- The change page shows the source branch as plain text; it is not linked to a repository browser.
+- The change-page source branch links to the first branch web link (gitiles, when installed) while the branch exists; without one it is plain text.
 
 ## Updating
 
