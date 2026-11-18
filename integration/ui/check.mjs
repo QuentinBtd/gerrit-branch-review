@@ -1,8 +1,8 @@
 // Copyright (C) 2026 The branch-review Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Browser check of the change-page "Source branch" row (display, gitiles link, copy button,
-// removal on an ordinary Change), run inside the pinned Playwright image by
+// Browser check of the change-page "Source branch" row (display, gitiles link, copy button with
+// and without the async clipboard API, removal on an ordinary Change), run inside the pinned Playwright image by
 // integration/blackbox.py. Exits non-zero with a message on the first failed expectation.
 //
 // Usage: node check.mjs BASE_URL PROJECT BRANCH_CHANGE PLAIN_CHANGE PLAIN_SUBJECT BRANCH PLAYWRIGHT_VERSION
@@ -46,6 +46,30 @@ try {
   for (let i = 0; i < 50 && (await readClipboard()) !== branch; i++) await page.waitForTimeout(100);
   const copied = await readClipboard();
   if (copied !== branch) throw new Error(`copied ${JSON.stringify(copied)}, expected ${branch}`);
+
+  // Plain HTTP has no async clipboard API. Hide it in a second tab, copy from the keyboard, and
+  // check the toast, that focus stays on the button, and (from the first tab) the clipboard.
+  await page.evaluate(() => navigator.clipboard.writeText(''));
+  const http = await context.newPage();
+  await http.addInitScript(() =>
+    Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined }),
+  );
+  await http.goto(changeUrl(branchChange));
+  const httpButton = http.locator('branch-review-source-branch gr-copy-clipboard gr-button');
+  await httpButton.focus();
+  await httpButton.evaluate((b) => (b.dataset.focusMark = '1'));
+  await http.keyboard.press('Enter');
+  await http.getByText('Branch name copied to clipboard').first().waitFor({ timeout: 15_000 });
+  const keptFocus = await http.evaluate(() => {
+    let a = document.activeElement;
+    while (a?.shadowRoot?.activeElement) a = a.shadowRoot.activeElement;
+    return a?.dataset.focusMark === '1';
+  });
+  if (!keptFocus) throw new Error('the plain-HTTP copy did not give focus back to the button');
+  await http.close();
+  await page.bringToFront();
+  const httpCopied = await readClipboard();
+  if (httpCopied !== branch) throw new Error(`plain-HTTP copy gave ${JSON.stringify(httpCopied)}`);
 
   // Follow a link inside the app: the router reuses the change view, which is where a stale row
   // from the previous Change would survive. The marker proves no full page load happened.

@@ -42,6 +42,17 @@ Gerrit.install((plugin) => {
       copy.hasTooltip = true;
       copy.buttonTitle = 'Copy branch name to clipboard';
       copy.copyTargetName = 'Branch name';
+      // Gerrit's button needs the async clipboard API, which plain-HTTP pages do not have: there,
+      // take the click before it reaches the inner button and copy the legacy way.
+      copy.addEventListener(
+        'click',
+        (e) => {
+          if (navigator.clipboard) return;
+          e.stopPropagation();
+          legacyCopy(branch, copy);
+        },
+        true,
+      );
       // Keep name and button on one line, as gr-commit-info does for the SHA.
       const line = document.createElement('span');
       line.style.cssText = 'display: inline-flex; align-items: center; gap: var(--spacing-s, 4px);';
@@ -50,6 +61,24 @@ Gerrit.install((plugin) => {
       section.append(title, value);
       this.append(section);
     }
+  }
+
+  function legacyCopy(text, source) {
+    let focused = document.activeElement;
+    while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.cssText = 'position: fixed; opacity: 0;';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    focused?.focus(); // select() moved focus to the textarea
+    const message = ok ? 'Branch name copied to clipboard' : 'Could not copy the branch name';
+    // Gerrit shows this event as its usual toast.
+    source.dispatchEvent(
+      new CustomEvent('show-alert', {detail: {message}, bubbles: true, composed: true}),
+    );
   }
 
   const tag = 'branch-review-source-branch';
