@@ -94,10 +94,10 @@ class Gerrit:
         sh(["docker", "start", self.name])
         self.wait_ready()
 
-    def ui_check(self, tmp, *args):
-        """Runs integration/ui/check.mjs in the Playwright image, inside this container's network."""
+    def ui_check(self, tmp, script, *args):
+        """Runs integration/ui/SCRIPT in the Playwright image, inside this container's network."""
         work = tempfile.mkdtemp(dir=tmp, prefix="ui-")
-        for f in ("package.json", "package-lock.json", "check.mjs"):
+        for f in ("package.json", "package-lock.json", script):
             shutil.copy(os.path.join(HERE, "ui", f), work)
         version = PLAYWRIGHT_IMAGE.split(":v", 1)[1].split("-", 1)[0]
         sh(
@@ -118,8 +118,8 @@ class Gerrit:
                 PLAYWRIGHT_IMAGE,
                 "sh",
                 "-c",
-                'npm ci --ignore-scripts --no-audit --no-fund >/dev/null && node check.mjs "$@"',
-                "check",
+                'npm ci --ignore-scripts --no-audit --no-fund >/dev/null && node "$0" "$@"',
+                script,
                 "http://localhost:8080" + PREFIX,
                 *args,
                 version,
@@ -615,7 +615,18 @@ class BlackBox(unittest.TestCase):
         _, plain = self.gerrit.rest(
             "POST", "/changes/", {"project": p, "branch": "master", "subject": "Plain change"}
         )
-        self.gerrit.ui_check(self.tmp, p, str(n), str(plain["_number"]), "Plain change", "feature/x")
+        self.gerrit.ui_check(
+            self.tmp, "check.mjs", p, str(n), str(plain["_number"]), "Plain change", "feature/x"
+        )
+
+    def test_ui_deletes_source_branch_of_closed_change(self):
+        p = self.new_project()
+        c = self.feature_client(p, self.alice, "http")
+        c.commit("gone.txt", "gone\n", "gone commit")
+        c.push("origin", "feature/x")
+        n = self.changes(p)[0]["_number"]
+        self.gerrit.rest("POST", "/changes/%d/abandon" % n, {})
+        self.gerrit.ui_check(self.tmp, "delete.mjs", p, str(n), "feature/x")
 
     def test_plugin_identity(self):
         _, plugins = self.gerrit.rest("GET", "/plugins/")

@@ -3,6 +3,7 @@
 
 package io.github.quentinbtd.gerrit.branchreview;
 
+import static com.google.gerrit.server.change.ChangeResource.CHANGE_KIND;
 import static com.google.gerrit.server.project.ProjectResource.PROJECT_KIND;
 
 import com.google.gerrit.extensions.events.ChangeMergedListener;
@@ -19,6 +20,7 @@ import com.google.gerrit.server.git.validators.MergeValidationListener;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.git.validators.RefOperationValidationListener;
 import io.github.quentinbtd.gerrit.branchreview.api.BranchStatus;
+import io.github.quentinbtd.gerrit.branchreview.api.DeleteSourceBranch;
 import io.github.quentinbtd.gerrit.branchreview.api.GetStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.PostSync;
 import io.github.quentinbtd.gerrit.branchreview.api.SourceBranchAttribute;
@@ -27,6 +29,7 @@ import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
 import io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService;
 import io.github.quentinbtd.gerrit.branchreview.state.StateStore;
 import io.github.quentinbtd.gerrit.branchreview.submit.MergeHandler;
+import io.github.quentinbtd.gerrit.branchreview.submit.SourceBranchDeleter;
 import io.github.quentinbtd.gerrit.branchreview.submit.SubmitGuard;
 import io.github.quentinbtd.gerrit.branchreview.sync.CommandHints;
 import io.github.quentinbtd.gerrit.branchreview.sync.EditListener;
@@ -53,6 +56,7 @@ public class Module extends LifecycleModule {
     bind(SyncService.class);
     bind(SyncExecutor.class);
     bind(MergeHandler.class);
+    bind(SourceBranchDeleter.class);
     bind(RecoveryService.class);
     bind(BranchStatus.class);
     DynamicSet.bind(binder(), ReceivePackInitializer.class).to(PushHook.class);
@@ -74,6 +78,7 @@ public class Module extends LifecycleModule {
           protected void configure() {
             get(PROJECT_KIND, "status").to(GetStatus.class);
             post(PROJECT_KIND, "sync").to(PostSync.class);
+            post(CHANGE_KIND, "delete-source-branch").to(DeleteSourceBranch.class);
           }
         });
   }

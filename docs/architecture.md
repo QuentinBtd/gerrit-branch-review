@@ -20,6 +20,7 @@ recorded in [docs/adr](adr/).
 | `MergeHandler` | `ChangeMergedListener` | Closes lifecycles, optional guarded source deletion |
 | `RecoveryService` | `LifecycleListener` | Retries accepted-but-unsynchronized work and pending cleanups |
 | `BranchStatus` (REST `branch-review~status` / `~sync`, SSH `branch-review status` / `sync`) | REST and SSH modules | Permission-filtered diagnosis and explicit, idempotent repair |
+| `DeleteSourceBranch`, `SourceBranchDeleter` | REST change view + `UiAction` | "Delete source branch" action on closed Changes; guarded deletion shared with the Submit cleanup ([details](#deleting-the-source-branch-from-the-change-page)) |
 | `SourceBranchAttribute`, `static/branch-review.js` | `ChangePluginDefinedInfoFactory`, `BranchWebLink`s, `WebUiPlugin` (`change-metadata-item`) | Adds `source_branch` (read from the Change link, only for users who can read that branch) and, while the branch exists, `source_branch_url` (first branch web link, e.g. gitiles) to `ChangeInfo.plugins`; shows a "Source branch" row with that link and Gerrit's copy button |
 
 ## Synchronization flow and transaction boundaries
@@ -280,6 +281,24 @@ Deletion is a compare-and-swap on that commit as the server, recorded with the s
 account in the ref-updated event. Repeated merge events are idempotent; failures never affect
 the Submit and are retried at most `maxAttempts` times by the recovery service. The cleanup
 can therefore never exceed what the submitter could have done by hand.
+
+### Deleting the source branch from the change page
+
+`DeleteSourceBranch` (`POST /changes/{id}/branch-review~delete-source-branch`) offers a
+"Delete source branch" change action (overflow menu) on closed Changes, independently of
+`deleteSourceBranchOnSubmit`. It is shown, and accepted, only when:
+
+1. the Change is merged or abandoned and was created by the plugin;
+2. the user can read and delete the branch (`delete` or force push), and Gerrit's ref operation
+   validators accept the deletion by that user;
+3. the branch still belongs to the Change's lifecycle and points at exactly the source commit
+   the Change represents (the submitted source commit after a merge, otherwise the last
+   synchronized one). A branch with commits pushed after that is kept, with a 409 that says so.
+
+The deletion uses the same compare-and-swap as the Submit cleanup (`SourceBranchDeleter`), under
+the branch lock. It is recorded in the lifecycle (`SOURCE_DELETED` for an abandoned Change,
+`cleanup = deleted` after a merge) and as a message on the Change. `static/branch-review.js`
+asks for confirmation, calls the endpoint and reloads the Change.
 
 ## Configuration caching
 
