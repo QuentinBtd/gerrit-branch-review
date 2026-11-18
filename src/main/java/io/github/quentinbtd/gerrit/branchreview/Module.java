@@ -9,7 +9,10 @@ import com.google.gerrit.extensions.events.ChangeMergedListener;
 import com.google.gerrit.extensions.events.RevisionCreatedListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.RestApiModule;
+import com.google.gerrit.extensions.webui.JavaScriptPlugin;
+import com.google.gerrit.extensions.webui.WebUiPlugin;
 import com.google.gerrit.lifecycle.LifecycleModule;
+import com.google.gerrit.server.change.ChangePluginDefinedInfoFactory;
 import com.google.gerrit.server.git.ReceivePackInitializer;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.MergeValidationListener;
@@ -18,6 +21,7 @@ import com.google.gerrit.server.git.validators.RefOperationValidationListener;
 import io.github.quentinbtd.gerrit.branchreview.api.BranchStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.GetStatus;
 import io.github.quentinbtd.gerrit.branchreview.api.PostSync;
+import io.github.quentinbtd.gerrit.branchreview.api.SourceBranchAttribute;
 import io.github.quentinbtd.gerrit.branchreview.config.ProjectConfigLoader;
 import io.github.quentinbtd.gerrit.branchreview.config.ServerSettings;
 import io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService;
@@ -59,6 +63,9 @@ public class Module extends LifecycleModule {
     DynamicSet.bind(binder(), OnSubmitValidationListener.class).to(SubmitGuard.class);
     DynamicSet.bind(binder(), ChangeMergedListener.class).to(MergeHandler.class);
     DynamicSet.bind(binder(), RevisionCreatedListener.class).to(EditListener.class);
+    DynamicSet.bind(binder(), ChangePluginDefinedInfoFactory.class).to(SourceBranchAttribute.class);
+    DynamicSet.bind(binder(), WebUiPlugin.class)
+        .toInstance(new JavaScriptPlugin("branch-review.js"));
     listener().to(SyncExecutor.class);
     listener().to(RecoveryService.class);
     install(

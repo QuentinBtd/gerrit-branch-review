@@ -68,6 +68,7 @@ src/main/java/…/branchreview   plugin sources (config, squash, text, state, sy
 src/test/java/…/unit           pure unit tests
 src/test/java/…/it             in-process acceptance tests (LightweightPluginDaemonTest)
 integration/blackbox.py        container + real git over SSH/HTTP against the packaged JAR
+integration/ui/                browser check of the change page (pinned Playwright image + lockfile)
 tools/gerrit-releases.json     exact Gerrit releases, checksums, image digests
 tools/bazel/                   Bazel macros and module extensions
 tools/scripts/                 task implementations shared by mise and CI
