@@ -97,7 +97,12 @@ public class SourceBranchUiIT extends AbstractBranchReviewIT {
 
   @Test
   public void uiScriptIsRegistered() throws Exception {
-    assertThat(gApi.config().server().getInfo().plugin.jsResourcePaths)
-        .contains("plugins/branch-review/static/branch-review.js");
+    // The ?v= fingerprint makes browsers fetch the script again after an upgrade.
+    assertThat(
+            gApi.config().server().getInfo().plugin.jsResourcePaths.stream()
+                .anyMatch(
+                    p ->
+                        p.matches("plugins/branch-review/static/branch-review\\.js\\?v=[0-9a-f]+")))
+        .isTrue();
   }
 }
