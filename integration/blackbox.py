@@ -572,7 +572,7 @@ class BlackBox(unittest.TestCase):
         _, plugins = self.gerrit.rest("GET", "/plugins/")
         self.assertIn("branch-review", plugins)
         with open(os.path.join(HERE, "..", "version.txt")) as f:
-            self.assertEqual(plugins["branch-review"]["version"], f.read().strip())
+            self.assertEqual(plugins["branch-review"]["version"], "v" + f.read().strip())
 
 
 class JUnitResult(unittest.TextTestResult):

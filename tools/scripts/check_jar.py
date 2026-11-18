@@ -31,7 +31,7 @@ def main(jar, version, gerrit):
                 k, v = line.split(": ", 1)
                 manifest[k] = v
         expected = dict(REQUIRED)
-        expected["Implementation-Version"] = version
+        expected["Implementation-Version"] = "v" + version
         expected["Gerrit-ApiVersion"] = gerrit
         for k, v in expected.items():
             if manifest.get(k) != v:

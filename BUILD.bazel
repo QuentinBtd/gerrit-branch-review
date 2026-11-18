@@ -52,7 +52,8 @@ java_binary(
         "Gerrit-Module: io.github.quentinbtd.gerrit.branchreview.Module",
         "Gerrit-SshModule: io.github.quentinbtd.gerrit.branchreview.SshModule",
         "Implementation-Title: branch-review",
-        "Implementation-Version: " + PLUGIN_VERSION,
+        # Shown in the plugin list; "v" matches the core plugins (e.g. v3.14.4).
+        "Implementation-Version: v" + PLUGIN_VERSION,
         "Implementation-URL: https://github.com/QuentinBtd/gerrit-branch-review",
         "Implementation-Vendor: The branch-review Authors",
     ] + select({

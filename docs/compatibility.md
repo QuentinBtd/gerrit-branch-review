@@ -19,7 +19,7 @@ Evidence, commands and dates: [test-evidence.md](test-evidence.md).
 - Every JAR contains only the plugin's own classes, its documentation and `LICENSE`, and the
   manifest entries `Gerrit-PluginName: branch-review`, `Gerrit-ApiType: plugin`,
   `Gerrit-ReloadMode: restart`, `Gerrit-Module`, `Gerrit-SshModule`,
-  `Implementation-Version: <plugin version>` and `Gerrit-ApiVersion: <exact Gerrit release>`
+  `Implementation-Version: v<plugin version>` and `Gerrit-ApiVersion: <exact Gerrit release>`
   (checked by `tools/scripts/check_jar.py` in every build and release).
 - Checksums of a release are published in `branch-review-<version>.sha256`. Checksums of local
   builds of the unreleased `0.0.0` tree are listed in the test evidence; JARs were byte-identical
