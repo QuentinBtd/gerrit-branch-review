@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.6.0...v0.7.0) (2026-11-18)
+
+
+### Features
+
+* **ui:** delete the source branch from a closed Change ([6fa078e](https://github.com/QuentinBtd/gerrit-branch-review/commit/6fa078e460ae4fff76c607d054e728dd6eaaf60d))
+* **ui:** delete the source branch from a closed Change ([5f98403](https://github.com/QuentinBtd/gerrit-branch-review/commit/5f98403694380884e0370018e44ec68ac3e5aaab))
+* **ui:** strike through the source branch once it is deleted ([6ca2b05](https://github.com/QuentinBtd/gerrit-branch-review/commit/6ca2b055b500bdc4817194e83097b022482be0f9))
+
+
+### Bug Fixes
+
+* **ui:** refuse source deletion in read-only projects and on restored Changes ([a785760](https://github.com/QuentinBtd/gerrit-branch-review/commit/a785760faf2ccb14f9ff7ad8973aa13da2133eb8))
+
 ## [0.6.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.5.1...v0.6.0) (2026-11-18)
 
 
