@@ -33,7 +33,8 @@ import org.eclipse.jgit.lib.Repository;
  * change-page metadata item. Read only from the durable change link, and only shown to users who
  * can read the source branch (a single-commit squash keeps the original message, so the Change
  * itself does not always reveal the branch name). While the branch exists, the first branch web
- * link (e.g. gitiles) is added as {@code source_branch_url}.
+ * link (e.g. gitiles) is added as {@code source_branch_url}; once it is gone (deleted by hand, from
+ * the change page or by the Submit cleanup), {@code source_branch_deleted} is true instead.
  */
 @Singleton
 public class SourceBranchAttribute implements ChangePluginDefinedInfoFactory {
@@ -46,6 +47,7 @@ public class SourceBranchAttribute implements ChangePluginDefinedInfoFactory {
   public static class Info extends PluginDefinedInfo {
     public String sourceBranch;
     public String sourceBranchUrl;
+    public Boolean sourceBranchDeleted;
   }
 
   private final GitRepositoryManager repoManager;
@@ -90,6 +92,8 @@ public class SourceBranchAttribute implements ChangePluginDefinedInfoFactory {
                       .map((WebLinkInfo l) -> l.url)
                       .findFirst()
                       .orElse(null);
+            } else {
+              info.sourceBranchDeleted = true;
             }
             out.put(cd.getId(), info);
           }

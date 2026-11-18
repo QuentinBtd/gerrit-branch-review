@@ -61,11 +61,13 @@ public class SourceBranchUiIT extends AbstractBranchReviewIT {
       JsonObject info = detail(number).getAsJsonArray("plugins").get(0).getAsJsonObject();
       assertThat(info.get("source_branch_url").getAsString())
           .isEqualTo("/browse/" + project.get() + "/" + FEATURE);
+      assertThat(info.has("source_branch_deleted")).isFalse();
 
       gApi.projects().name(project.get()).branch(FEATURE).delete();
       info = detail(number).getAsJsonArray("plugins").get(0).getAsJsonObject();
       assertThat(info.get("source_branch").getAsString()).isEqualTo(FEATURE);
       assertThat(info.has("source_branch_url")).isFalse();
+      assertThat(info.get("source_branch_deleted").getAsBoolean()).isTrue();
     } finally {
       handle.remove();
     }

@@ -21,7 +21,7 @@ recorded in [docs/adr](adr/).
 | `RecoveryService` | `LifecycleListener` | Retries accepted-but-unsynchronized work and pending cleanups |
 | `BranchStatus` (REST `branch-review~status` / `~sync`, SSH `branch-review status` / `sync`) | REST and SSH modules | Permission-filtered diagnosis and explicit, idempotent repair |
 | `DeleteSourceBranch`, `SourceBranchDeleter` | REST change view + `UiAction` | "Delete source branch" action on closed Changes; guarded deletion shared with the Submit cleanup ([details](#deleting-the-source-branch-from-the-change-page)) |
-| `SourceBranchAttribute`, `static/branch-review.js` | `ChangePluginDefinedInfoFactory`, `BranchWebLink`s, `WebUiPlugin` (`change-metadata-item`) | Adds `source_branch` (read from the Change link, only for users who can read that branch) and, while the branch exists, `source_branch_url` (first branch web link, e.g. gitiles) to `ChangeInfo.plugins`; shows a "Source branch" row with that link and Gerrit's copy button |
+| `SourceBranchAttribute`, `static/branch-review.js` | `ChangePluginDefinedInfoFactory`, `BranchWebLink`s, `WebUiPlugin` (`change-metadata-item`) | Adds `source_branch` (read from the Change link, only for users who can read that branch) and, while the branch exists, `source_branch_url` (first branch web link, e.g. gitiles), or `source_branch_deleted` once it is gone, to `ChangeInfo.plugins`; shows a "Source branch" row with that link (struck through when deleted) and Gerrit's copy button |
 
 ## Synchronization flow and transaction boundaries
 

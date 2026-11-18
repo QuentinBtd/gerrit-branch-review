@@ -30,11 +30,13 @@ Gerrit.install((plugin) => {
       const value = document.createElement('span');
       value.className = 'value';
       const branch = ref.replace(/^refs\/heads\//, '');
-      // Link to the repository browser (e.g. gitiles) while the branch exists, else plain text.
+      // Link to the repository browser (e.g. gitiles) while the branch exists, else plain text;
+      // struck through once the branch is deleted.
       const url = info.source_branch_url;
       const label = document.createElement(url ? 'a' : 'span');
       if (url) label.href = url;
-      label.title = ref;
+      label.title = info.source_branch_deleted ? `${ref} (deleted)` : ref;
+      if (info.source_branch_deleted) label.style.textDecoration = 'line-through';
       label.textContent = branch;
       // Gerrit's own copy button, as next to the commit SHA.
       const copy = document.createElement('gr-copy-clipboard');

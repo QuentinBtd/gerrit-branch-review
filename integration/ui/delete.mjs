@@ -40,10 +40,14 @@ try {
     `${base}/projects/${encodeURIComponent(project)}/branches/${ref}`,
   );
   if (gone.status() !== 404) throw new Error(`branch still answers ${gone.status()}`);
-  // The Change was reloaded: the name is no longer a link to the deleted branch.
+  // The Change was reloaded: the name is no longer a link, and it is struck through.
   await page
     .locator('branch-review-source-branch .value a')
     .waitFor({ state: 'detached', timeout: 15_000 });
+  const name = page.locator('branch-review-source-branch .value span[title$="(deleted)"]');
+  await name.waitFor({ timeout: 15_000 });
+  const decoration = await name.evaluate((el) => getComputedStyle(el).textDecorationLine);
+  if (decoration !== 'line-through') throw new Error(`deleted branch is shown with ${decoration}`);
 } finally {
   await browser.close();
 }
