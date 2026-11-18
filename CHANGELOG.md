@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.5.1...v0.6.0) (2026-11-18)
+
+
+### Features
+
+* **ui:** show the source branch on the change page ([c514386](https://github.com/QuentinBtd/gerrit-branch-review/commit/c514386656b6886758fd1c875ffc3a5dc6a552e5))
+
 ## [0.5.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.5.0...v0.5.1) (2026-11-18)
 
 
