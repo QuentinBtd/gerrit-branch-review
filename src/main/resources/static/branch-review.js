@@ -34,15 +34,17 @@ Gerrit.install((plugin) => {
       copy.type = 'button';
       copy.textContent = branch;
       copy.title = `${ref} (click to copy)`;
+      // Reset only the button's look; `all: unset` would also drop the focus outline.
       copy.style.cssText =
-        'all: unset; cursor: pointer; overflow-wrap: anywhere; outline-offset: 2px;';
-      copy.addEventListener('click', () => this.copy(branch));
+        'background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;' +
+        ' text-align: inherit; cursor: pointer; overflow-wrap: anywhere;';
+      copy.addEventListener('click', () => this.copy(branch, copy));
       value.append(copy);
       section.append(title, value);
       this.append(section);
     }
 
-    async copy(text) {
+    async copy(text, button) {
       let message = 'Branch name copied to clipboard';
       try {
         await navigator.clipboard.writeText(text);
@@ -55,6 +57,7 @@ Gerrit.install((plugin) => {
         area.select();
         if (!document.execCommand('copy')) message = 'Could not copy the branch name';
         area.remove();
+        button.focus(); // select() moved focus to the textarea
       }
       // Gerrit shows this event as its usual toast.
       this.dispatchEvent(

@@ -1,8 +1,8 @@
 // Copyright (C) 2026 The branch-review Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Browser check of the change-page "Source branch" row (display, click-to-copy, removal on an
-// ordinary Change), run inside the pinned Playwright image by integration/blackbox.py. Exits
+// Browser check of the change-page "Source branch" row (display, click-to-copy, plain-HTTP copy
+// fallback from the keyboard, removal on an ordinary Change), run inside the pinned Playwright image by integration/blackbox.py. Exits
 // non-zero with a message on the first failed expectation.
 //
 // Usage: node check.mjs BASE_URL PROJECT BRANCH_CHANGE PLAIN_CHANGE PLAIN_SUBJECT BRANCH PLAYWRIGHT_VERSION
@@ -37,6 +37,26 @@ try {
   await page.getByText('Branch name copied to clipboard').first().waitFor({ timeout: 15_000 });
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   if (copied !== branch) throw new Error(`copied ${JSON.stringify(copied)}, expected ${branch}`);
+
+  // Plain-HTTP fallback (no async clipboard), from the keyboard: the copy still works, focus
+  // goes back to the button and its focus outline is visible.
+  const button = row.locator('button');
+  await page.evaluate(async () => {
+    await navigator.clipboard.writeText('');
+    navigator.clipboard.writeText = () => Promise.reject(new Error('insecure context'));
+  });
+  await button.focus();
+  await page.keyboard.press('Enter');
+  const readClipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  for (let i = 0; i < 50 && (await readClipboard()) !== branch; i++) await page.waitForTimeout(100);
+  const fallback = await readClipboard();
+  if (fallback !== branch) throw new Error(`fallback copied ${JSON.stringify(fallback)}`);
+  const focus = await button.evaluate((b) => ({
+    kept: b.getRootNode().activeElement === b,
+    outline: getComputedStyle(b).outlineStyle,
+  }));
+  if (!focus.kept) throw new Error('the fallback copy did not give focus back to the button');
+  if (focus.outline === 'none') throw new Error('the focused button has no visible outline');
 
   // Follow a link inside the app: the router reuses the change view, which is where a stale row
   // from the previous Change would survive. The marker proves no full page load happened.
