@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.5.0...v0.5.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **build:** prefix the plugin version with "v" in the manifest ([c8e94f0](https://github.com/QuentinBtd/gerrit-branch-review/commit/c8e94f09dcfd99f440f1f7f0fcb957ed8646a91c))
+* **build:** prefix the plugin version with "v" in the manifest ([fbb9a35](https://github.com/QuentinBtd/gerrit-branch-review/commit/fbb9a35a3accf44acb11950070fe14f17658c084))
+
 ## [0.5.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.4.0...v0.5.0) (2026-11-16)
 
 
