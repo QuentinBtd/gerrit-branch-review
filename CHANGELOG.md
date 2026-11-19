@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.7.1...v0.8.0) (2026-11-19)
+
+
+### Features
+
+* **docs:** embed the user documentation in the plugin JAR ([8a7f25a](https://github.com/QuentinBtd/gerrit-branch-review/commit/8a7f25a33cb9ac080df3e71d0feda98b1be34586))
+* **docs:** embed the user documentation in the plugin JAR ([72fb729](https://github.com/QuentinBtd/gerrit-branch-review/commit/72fb7298a0eb8d02eb0860002ce9387abb21c739))
+
 ## [0.7.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.7.0...v0.7.1) (2026-11-18)
 
 
