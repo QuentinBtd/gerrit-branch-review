@@ -26,6 +26,20 @@ string_flag(
     for s in GERRIT_SERIES
 ]
 
+# Gerrit serves Documentation/*.md from the plugin JAR (linked from /admin/plugins).
+EMBEDDED_DOCS = [
+    "architecture.md",
+    "configuration.md",
+    "security.md",
+]
+
+genrule(
+    name = "embedded_docs",
+    srcs = ["docs/" + d for d in EMBEDDED_DOCS],
+    outs = ["Documentation/" + d for d in EMBEDDED_DOCS],
+    cmd = "cp $(SRCS) $(RULEDIR)/Documentation/",
+)
+
 java_library(
     name = "branch_review_lib",
     # The only version-specific source: the validator selection API differs in 3.14.
@@ -34,7 +48,10 @@ java_library(
         ":gerrit_3_13": glob(["src/main/compat/with-ssh-info/**/*.java"]),
         ":gerrit_3_14": glob(["src/main/compat/without-ssh-info/**/*.java"]),
     }),
-    resources = glob(["src/main/resources/**/*"]) + ["LICENSE"],
+    resources = glob(["src/main/resources/**/*"]) + [
+        "LICENSE",
+        ":embedded_docs",
+    ],
     deps = ["//lib:plugin_api"],
 )
 

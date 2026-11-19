@@ -10,4 +10,4 @@ the name is struck through. Once the Change is
 merged or abandoned, users allowed to delete the branch get a "Delete source
 branch" action, refused if the branch has commits the Change does not have.
 
-See the project documentation for configuration, permissions and recovery.
+Configuration, permissions, recovery and the security model are documented below.

@@ -6,7 +6,7 @@ The plugin is active for a project when its **effective** configuration sets `en
 The effective configuration merges the `branch-review.config` files at the root of the
 `refs/meta/config` of the project and of its parents (see [Inheritance](#inheritance)), so a file
 in a parent project enables all its descendants. Server settings can only restrict the plugin.
-Example: [`examples/branch-review.config`](../examples/branch-review.config).
+Example: [`examples/branch-review.config`](https://github.com/QuentinBtd/gerrit-branch-review/blob/main/examples/branch-review.config).
 
 ```ini
 [branchReview]

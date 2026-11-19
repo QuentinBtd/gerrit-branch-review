@@ -2,8 +2,8 @@
 
 branch-review mirrors ordinary branch pushes into one Gerrit Change per branch lifecycle. It
 adds no client tooling and no external service: everything runs inside Gerrit through the
-extension points listed in the [API investigation](api-investigation.md). Decisions are
-recorded in [docs/adr](adr/).
+extension points listed in the [API investigation](https://github.com/QuentinBtd/gerrit-branch-review/blob/main/docs/api-investigation.md). Decisions are
+recorded in [docs/adr](https://github.com/QuentinBtd/gerrit-branch-review/tree/main/docs/adr).
 
 ## Components
 
@@ -266,7 +266,7 @@ REST call when SSH is disabled.
 
 ## Submit and cleanup
 
-See [ADR 0004](adr/0004-submit-policy.md) for the submit guard. After Gerrit reports the merge,
+See [ADR 0004](https://github.com/QuentinBtd/gerrit-branch-review/blob/main/docs/adr/0004-submit-policy.md) for the submit guard. After Gerrit reports the merge,
 `MergeHandler` records the merged commit and the submitted source commit. If
 `deleteSourceBranchOnSubmit = true` it deletes the source ref only when, at that time:
 
