@@ -78,4 +78,4 @@ commit body is logged.
 
 ## Reporting
 
-See [SECURITY.md](../SECURITY.md).
+See [SECURITY.md](https://github.com/QuentinBtd/gerrit-branch-review/blob/main/SECURITY.md).
