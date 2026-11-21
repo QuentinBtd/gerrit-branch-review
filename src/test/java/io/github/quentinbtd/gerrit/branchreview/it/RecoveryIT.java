@@ -272,16 +272,14 @@ public class RecoveryIT extends AbstractBranchReviewIT {
             .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
     var release = new java.util.concurrent.CountDownLatch(1);
     // Retry until a slot is free: the previous synchronization may still be finishing.
-    waitFor(
-        () ->
-            executor.execute(
-                () -> {
-                  try {
-                    release.await();
-                  } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                  }
-                }));
+    waitFor(() ->
+        executor.execute(() -> {
+          try {
+            release.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        }));
     try {
       // The edit event cannot be queued.
       var edit = gApi.changes().id(project.get(), n).edit();
@@ -387,14 +385,13 @@ public class RecoveryIT extends AbstractBranchReviewIT {
     try (Registration reg = extensionRegistry.newRegistration().add(slow)) {
       // A real REST request on its own request thread.
       Thread request =
-          new Thread(
-              () -> {
-                try {
-                  response.set(syncViaRest(user, FEATURE, new PostSync.Input()));
-                } catch (Exception ex) {
-                  response.set("error: " + ex);
-                }
-              });
+          new Thread(() -> {
+            try {
+              response.set(syncViaRest(user, FEATURE, new PostSync.Input()));
+            } catch (Exception ex) {
+              response.set("error: " + ex);
+            }
+          });
       request.start();
       assertThat(entered.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
       Thread stopper = new Thread(executor::stop);

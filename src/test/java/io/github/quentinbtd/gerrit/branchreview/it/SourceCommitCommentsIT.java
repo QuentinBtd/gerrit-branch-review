@@ -557,12 +557,11 @@ public class SourceCommitCommentsIT extends AbstractBranchReviewIT {
 
     String prefix = publicationPrefix(n);
     approveAndSubmit(n);
-    waitFor(
-        () -> {
-          try (var r = repoManager.openRepository(project)) {
-            return r.getRefDatabase().getRefsByPrefix(prefix).isEmpty();
-          }
-        });
+    waitFor(() -> {
+      try (var r = repoManager.openRepository(project)) {
+        return r.getRefDatabase().getRefsByPrefix(prefix).isEmpty();
+      }
+    });
   }
 
   @Test
