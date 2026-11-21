@@ -19,7 +19,7 @@ java = "temurin-21.0.12+8.0.LTS"
 bazelisk = "1.29.0"
 # Hooks and linters
 prek = "0.5.5"
-"aqua:google/google-java-format" = "1.37.0"
+"aqua:google/google-java-format" = "2.0.0"
 buildifier = "10.1.0"
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
