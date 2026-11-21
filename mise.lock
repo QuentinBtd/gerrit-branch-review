@@ -285,7 +285,7 @@ specifiers = ["0.24.0"]
 
 [[tools."npm:release-please"]]
 version = "17.11.2"
-aube = { path = ".mise/locks/npm-release-please/17.11.2", digest = "sha256:3283b3c961fe2053c667ca71e234b62ba863a9d75e1cd8e398988db5f1adfa22" }
+aube = { path = ".mise/locks/npm-release-please/17.11.2", digest = "sha256:c2df0e4cba72b23d2c87e0f7b79afc01a3a8dec6c44d5dab99f5da2032f895ae" }
 backend = "npm:release-please"
 specifiers = ["17.11.2"]
 
