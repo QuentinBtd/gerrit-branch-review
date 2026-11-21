@@ -314,11 +314,10 @@ public class SubmitIT extends AbstractBranchReviewIT {
           .isNotEqualTo(org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK);
       // ... and therefore the cleanup too.
       approveAndSubmit(onlyChange());
-      waitFor(
-          () ->
-              lifecycle(FEATURE).merge != null
-                  && !"pending".equals(lifecycle(FEATURE).merge.cleanup)
-                  && !"none".equals(lifecycle(FEATURE).merge.cleanup));
+      waitFor(() ->
+          lifecycle(FEATURE).merge != null
+              && !"pending".equals(lifecycle(FEATURE).merge.cleanup)
+              && !"none".equals(lifecycle(FEATURE).merge.cleanup));
     }
     Lifecycle lc = lifecycle(FEATURE);
     assertThat(lc.merge.cleanup).isEqualTo("skipped");
@@ -371,16 +370,14 @@ public class SubmitIT extends AbstractBranchReviewIT {
     var release = new java.util.concurrent.CountDownLatch(1);
     try {
       // Push completion can precede the previous worker's admission-slot release.
-      waitFor(
-          () ->
-              executor.execute(
-                  () -> {
-                    try {
-                      release.await();
-                    } catch (InterruptedException ex) {
-                      Thread.currentThread().interrupt();
-                    }
-                  }));
+      waitFor(() ->
+          executor.execute(() -> {
+            try {
+              release.await();
+            } catch (InterruptedException ex) {
+              Thread.currentThread().interrupt();
+            }
+          }));
       approveAndSubmit(n);
       assertThat(lifecycle(FEATURE).merge).isNull();
     } finally {
@@ -393,13 +390,12 @@ public class SubmitIT extends AbstractBranchReviewIT {
         .getInstance(io.github.quentinbtd.gerrit.branchreview.recovery.RecoveryService.class)
         .runOnce();
     // Ref deletion happens before the final lifecycle write; wait for both effects.
-    waitFor(
-        () -> {
-          Lifecycle current = lifecycle(FEATURE);
-          return current.merge != null
-              && "deleted".equals(current.merge.cleanup)
-              && refValue(FEATURE) == null;
-        });
+    waitFor(() -> {
+      Lifecycle current = lifecycle(FEATURE);
+      return current.merge != null
+          && "deleted".equals(current.merge.cleanup)
+          && refValue(FEATURE) == null;
+    });
     Lifecycle lc = lifecycle(FEATURE);
     assertThat(lc.merge.submitter).isEqualTo(admin.id().get());
     assertThat(lc.merge.cleanup).isEqualTo("deleted");
@@ -502,13 +498,12 @@ public class SubmitIT extends AbstractBranchReviewIT {
     pushFeature(repo, 2);
     approveAndSubmit(onlyChange());
     // The ref is deleted before the final cleanup result is persisted.
-    waitFor(
-        () -> {
-          Lifecycle current = lifecycle(FEATURE);
-          return current.merge != null
-              && "deleted".equals(current.merge.cleanup)
-              && refValue(FEATURE) == null;
-        });
+    waitFor(() -> {
+      Lifecycle current = lifecycle(FEATURE);
+      return current.merge != null
+          && "deleted".equals(current.merge.cleanup)
+          && refValue(FEATURE) == null;
+    });
     Lifecycle lc = lifecycle(FEATURE);
     assertThat(lc.merge.cleanup).isEqualTo("deleted");
     // Repeated merge handling is idempotent.
@@ -550,9 +545,8 @@ public class SubmitIT extends AbstractBranchReviewIT {
     requestScopeOperations.setApiUser(user.id());
     approveAndSubmit(onlyChange());
     requestScopeOperations.setApiUser(admin.id());
-    waitFor(
-        () ->
-            lifecycle(bugfix).merge != null && !"pending".equals(lifecycle(bugfix).merge.cleanup));
+    waitFor(() ->
+        lifecycle(bugfix).merge != null && !"pending".equals(lifecycle(bugfix).merge.cleanup));
     assertThat(lifecycle(bugfix).merge.submitter).isEqualTo(user.id().get());
     assertThat(lifecycle(bugfix).merge.cleanup).isEqualTo("skipped");
     assertThat(lifecycle(bugfix).merge.cleanupDetail).contains("no delete permission");
@@ -574,10 +568,8 @@ public class SubmitIT extends AbstractBranchReviewIT {
         plugin
             .getSysInjector()
             .getInstance(io.github.quentinbtd.gerrit.branchreview.submit.MergeHandler.class);
-    waitFor(
-        () ->
-            lifecycle(FEATURE).merge != null
-                && !"pending".equals(lifecycle(FEATURE).merge.cleanup));
+    waitFor(() ->
+        lifecycle(FEATURE).merge != null && !"pending".equals(lifecycle(FEATURE).merge.cleanup));
     assertThat(lifecycle(FEATURE).merge.cleanup).isEqualTo("deleted");
     {
       // The branch is recreated at a different commit; a retried cleanup must keep it.

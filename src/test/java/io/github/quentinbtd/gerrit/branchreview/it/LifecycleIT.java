@@ -189,15 +189,14 @@ public class LifecycleIT extends AbstractBranchReviewIT {
             if (e.command.getRefName().startsWith("refs/changes/")
                 && moved.compareAndSet(false, true)) {
               Thread t =
-                  new Thread(
-                      () -> {
-                        try {
-                          requestScopeOperations.setApiUser(admin.id());
-                          gApi.changes().id(project.get(), number).move("stable");
-                        } catch (Exception ex) {
-                          throw new IllegalStateException(ex);
-                        }
-                      });
+                  new Thread(() -> {
+                    try {
+                      requestScopeOperations.setApiUser(admin.id());
+                      gApi.changes().id(project.get(), number).move("stable");
+                    } catch (Exception ex) {
+                      throw new IllegalStateException(ex);
+                    }
+                  });
               t.start();
               try {
                 t.join();
