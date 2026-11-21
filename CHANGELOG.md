@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.8.0...v0.8.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **gerrit:** update gerrit 3.14 to v3.14.5 ([b24be01](https://github.com/QuentinBtd/gerrit-branch-review/commit/b24be010f836dcbc07314b1bc70ef7403da46c8b))
+* **gerrit:** update gerrit 3.14 to v3.14.5 ([7595b77](https://github.com/QuentinBtd/gerrit-branch-review/commit/7595b7791701e7127125b173d10b6a1796888f96))
+
 ## [0.8.0](https://github.com/QuentinBtd/gerrit-branch-review/compare/v0.7.1...v0.8.0) (2026-11-19)
 
 
