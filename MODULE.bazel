@@ -7,7 +7,7 @@ release. Select the release with --//:gerrit=3.12|3.13|3.14 (default 3.14).
 
 module(name = "branch_review")
 
-bazel_dep(name = "rules_java", version = "9.6.1")
+bazel_dep(name = "rules_java", version = "9.9.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 
 version = use_extension("//tools/bazel:version.bzl", "plugin_version")
