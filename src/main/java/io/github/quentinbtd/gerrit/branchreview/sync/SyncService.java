@@ -1626,14 +1626,13 @@ public class SyncService {
       return Optional.empty();
     }
     return loadNotes(project, number)
-        .filter(
-            n -> {
-              try {
-                return permissionBackend.user(user).change(n).test(ChangePermission.READ);
-              } catch (PermissionBackendException e) {
-                return false;
-              }
-            })
+        .filter(n -> {
+          try {
+            return permissionBackend.user(user).change(n).test(ChangePermission.READ);
+          } catch (PermissionBackendException e) {
+            return false;
+          }
+        })
         .map(n -> number);
   }
 

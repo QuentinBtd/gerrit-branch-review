@@ -144,27 +144,25 @@ public class SyncExecutor implements LifecycleListener {
     }
     CompletableFuture<SyncResult> f = new CompletableFuture<>();
     try {
-      p.execute(
-          () -> {
-            SyncResult result = null;
-            Throwable failure = null;
-            try (ManualRequestContext ctx = requestContext.openAs(actor)) {
-              result =
-                  syncService.sync(project, ref, ctx.getUser().asIdentifiedUser(), trigger, opts);
-            } catch (Throwable t) {
-              log.atSevere().withCause(t).log("sync task failed for %s %s", project, ref);
-              failure = t;
-            } finally {
-              // Release the slot before publishing the result: whoever waits on it (a push, a
-              // manual sync) then finds the queue capacity already available again.
-              inFlight.decrementAndGet();
-            }
-            if (failure != null) {
-              f.completeExceptionally(failure);
-            } else {
-              f.complete(result);
-            }
-          });
+      p.execute(() -> {
+        SyncResult result = null;
+        Throwable failure = null;
+        try (ManualRequestContext ctx = requestContext.openAs(actor)) {
+          result = syncService.sync(project, ref, ctx.getUser().asIdentifiedUser(), trigger, opts);
+        } catch (Throwable t) {
+          log.atSevere().withCause(t).log("sync task failed for %s %s", project, ref);
+          failure = t;
+        } finally {
+          // Release the slot before publishing the result: whoever waits on it (a push, a
+          // manual sync) then finds the queue capacity already available again.
+          inFlight.decrementAndGet();
+        }
+        if (failure != null) {
+          f.completeExceptionally(failure);
+        } else {
+          f.complete(result);
+        }
+      });
     } catch (RuntimeException e) {
       inFlight.decrementAndGet();
       return Optional.empty();
@@ -184,16 +182,15 @@ public class SyncExecutor implements LifecycleListener {
       return false;
     }
     try {
-      p.execute(
-          () -> {
-            try {
-              r.run();
-            } catch (RuntimeException e) {
-              log.atSevere().withCause(e).log("branch-review task failed");
-            } finally {
-              inFlight.decrementAndGet();
-            }
-          });
+      p.execute(() -> {
+        try {
+          r.run();
+        } catch (RuntimeException e) {
+          log.atSevere().withCause(e).log("branch-review task failed");
+        } finally {
+          inFlight.decrementAndGet();
+        }
+      });
       return true;
     } catch (RuntimeException e) {
       inFlight.decrementAndGet();

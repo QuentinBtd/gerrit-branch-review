@@ -104,13 +104,12 @@ public class RoutingIT extends AbstractBranchReviewIT {
     approveAndSubmit(lifecycle("refs/heads/run/fix").changeNumber);
     approveAndSubmit(lifecycle("refs/heads/dev/fix").changeNumber);
     // The ref is deleted before the cleanup result is persisted: wait for both.
-    waitFor(
-        () -> {
-          Lifecycle run = lifecycle("refs/heads/run/fix");
-          return run.merge != null
-              && "deleted".equals(run.merge.cleanup)
-              && refValue("refs/heads/run/fix") == null;
-        });
+    waitFor(() -> {
+      Lifecycle run = lifecycle("refs/heads/run/fix");
+      return run.merge != null
+          && "deleted".equals(run.merge.cleanup)
+          && refValue("refs/heads/run/fix") == null;
+    });
     // MERGED and the "none" cleanup outcome are saved together.
     waitFor(() -> lifecycle("refs/heads/dev/fix").status == Lifecycle.Status.MERGED);
     // The run route deletes its source branches, the dev route (default false) keeps them.
@@ -224,16 +223,14 @@ public class RoutingIT extends AbstractBranchReviewIT {
             .getInstance(io.github.quentinbtd.gerrit.branchreview.sync.SyncExecutor.class);
     var release = new java.util.concurrent.CountDownLatch(1);
     // Retry until a slot is free: the previous synchronization may still be finishing.
-    waitFor(
-        () ->
-            executor.execute(
-                () -> {
-                  try {
-                    release.await();
-                  } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                  }
-                }));
+    waitFor(() ->
+        executor.execute(() -> {
+          try {
+            release.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        }));
     try {
       // Both edit events are dropped (queue full).
       editInGerrit(dev, "a/file1.txt", "lost dev edit\n");
@@ -249,11 +246,10 @@ public class RoutingIT extends AbstractBranchReviewIT {
     // Only the develop route (on) has recovery work.
     assertThat(recovery.runOnce()).isEqualTo(1);
     waitFor(() -> !refValue("refs/heads/dev/lost").equals(devStart));
-    waitFor(
-        () ->
-            refValue("refs/heads/dev/lost")
-                .name()
-                .equals(lifecycle("refs/heads/dev/lost").lastSourceId));
+    waitFor(() ->
+        refValue("refs/heads/dev/lost")
+            .name()
+            .equals(lifecycle("refs/heads/dev/lost").lastSourceId));
     assertThat(fileAt(refValue("refs/heads/dev/lost"), "a/file1.txt")).isEqualTo("lost dev edit\n");
     assertThat(refValue("refs/heads/feature/lost")).isEqualTo(mainStart);
   }

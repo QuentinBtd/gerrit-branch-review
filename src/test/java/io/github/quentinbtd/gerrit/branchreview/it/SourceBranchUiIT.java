@@ -100,9 +100,8 @@ public class SourceBranchUiIT extends AbstractBranchReviewIT {
     // The ?v= fingerprint makes browsers fetch the script again after an upgrade.
     assertThat(
             gApi.config().server().getInfo().plugin.jsResourcePaths.stream()
-                .anyMatch(
-                    p ->
-                        p.matches("plugins/branch-review/static/branch-review\\.js\\?v=[0-9a-f]+")))
+                .anyMatch(p ->
+                    p.matches("plugins/branch-review/static/branch-review\\.js\\?v=[0-9a-f]+")))
         .isTrue();
   }
 }
