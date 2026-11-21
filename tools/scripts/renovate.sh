@@ -10,7 +10,7 @@
 source "$(dirname "$0")/lib.sh"
 cd "${ROOT}"
 
-IMAGE="ghcr.io/renovatebot/renovate:44.145.1-full@sha256:2ead179919ff9cf3a2486a8667b26446138d1b9329823f674543a493afc3e1e4"
+IMAGE="ghcr.io/renovatebot/renovate:44.257.9-full@sha256:d6b65ff3562dd499240b23d34ef806ec7e5fd2675e4236a027dfb36774f2aa75"
 command -v docker >/dev/null || die "docker is required for Renovate tasks"
 
 run_image() {
