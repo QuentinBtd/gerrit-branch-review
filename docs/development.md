@@ -4,7 +4,7 @@
 
 Installed by you (not by mise):
 
-- **mise** 2026.9.18 or newer (CI pins exactly 2026.9.18). Install with the
+- **mise** 2026.11.4 or newer (CI pins exactly 2026.11.4). Install with the
   [official instructions](https://mise.jdx.dev/getting-started.html) and make sure `mise` is on
   `PATH` for non-interactive shells too (Git hooks call `mise x`).
 - **Git** ≥ 2.30, **OpenSSH** client (`ssh`, `ssh-keygen`).

@@ -4,7 +4,7 @@
 # which pin it separately), then: `mise trust && mise install && mise run doctor`.
 # Every task delegates to a script under tools/scripts so that CI and local runs share one
 # implementation.
-min_version = "2026.9.18"
+min_version = "2026.11.4"
 
 [settings]
 lockfile = true
@@ -16,25 +16,25 @@ BRANCH_REVIEW_ROOT = "{{config_root}}"
 [tools]
 # Build and runtime
 java = "temurin-21.0.12+8.0.LTS"
-bazelisk = "1.29.0"
+bazelisk = "1.30.0"
 # Hooks and linters
-prek = "0.5.5"
+prek = "0.5.10"
 "aqua:google/google-java-format" = "1.37.0"
-buildifier = "10.1.0"
+buildifier = "10.2.0"
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
 actionlint = "1.7.12"
 taplo = "0.10.0"
-ruff = "0.16.10"
-"pipx:check-jsonschema" = "0.38.2"
-uv = "0.12.23"
+ruff = "0.17.4"
+"pipx:check-jsonschema" = "0.39.0"
+uv = "0.13.7"
 # Black-box harness and helper scripts
-python = "3.13.16"
+python = "3.15.2"
 # Release, dependency and documentation tooling (npm packages run on the pinned Node)
-node = "24.22.1"
+node = "24.22.2"
 "npm:release-please" = "17.11.2"
-"npm:markdownlint-cli2" = "0.23.3"
-gh = "2.102.0"
+"npm:markdownlint-cli2" = "0.24.0"
+gh = "2.103.3"
 
 [tasks.doctor]
 description = "Report pinned tools, host prerequisites and container availability"
