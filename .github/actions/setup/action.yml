@@ -10,7 +10,7 @@ runs:
     - name: Install mise and pinned tools
       uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       with:
-        version: 2026.9.18 # kept in sync with min_version in .mise.toml (Renovate group "mise")
+        version: 2026.11.4 # kept in sync with min_version in .mise.toml (Renovate group "mise")
         install: true
         cache: true
     - name: Bazel disk cache
