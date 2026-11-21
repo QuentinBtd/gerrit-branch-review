@@ -17,12 +17,12 @@
       "image": "gerritcodereview/gerrit:3.13.10-ubuntu24@sha256:8ed036c8841aa5229a8e745fc62a57c83ef0e32ee1dc30304ee1f3c15084298d"
     },
     "3.14": {
-      "version": "3.14.4",
-      "tagCommit": "6d038645483357e8f72df648dcb2c4d7aa1914c9",
-      "pluginApiSha256": "c20279b85a339b835b2b8cccf17cf02d5f0dd00b30a8cd137cd2971f5db8d1bc",
-      "acceptanceFrameworkSha256": "418b8dc93a6ce07d0fd5819b0968798c9d4c0c2b8c4d22aae7c6e14d8f71caf6",
+      "version": "3.14.5",
+      "tagCommit": "acab9f4dc2f352268c0a201d619162040231ac8d",
+      "pluginApiSha256": "39847f251dca79c3feb517c15d672ba4e8d54b502831658add66531e540e8cf4",
+      "acceptanceFrameworkSha256": "1bdbfeac5cc567efe2662119518f903240cf479920d8b3363c41148b9bea72b5",
       "bouncycastle": "1.84",
-      "image": "gerritcodereview/gerrit:3.14.4-ubuntu24@sha256:e3b5871b900079abc67d0705dad04e579c231da9f89b9d26be9de044696bae12"
+      "image": "gerritcodereview/gerrit:3.14.5-ubuntu24@sha256:8c658681130aaa1124027d48479619ac147bbdee7b2828b94b791c4ede7d1b9e"
     }
   },
   "bouncycastle": {

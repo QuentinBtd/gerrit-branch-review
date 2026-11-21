@@ -72,12 +72,12 @@
       "versioningTemplate": "docker"
     },
     {
-      // Minimum mise version in .mise.toml; the CI mise version is the mise-action "version"
-      // input, tracked natively by the github-actions manager. Group both via packageRules.
+      // Minimum mise version in .mise.toml and the CI mise version (the mise-action "version"
+      // input, which the github-actions manager does not track). Both move in one PR.
       "customType": "regex",
-      "description": "mise min_version in .mise.toml",
-      "managerFilePatterns": ["/^\\.mise\\.toml$/"],
-      "matchStrings": ["min_version = \"(?<currentValue>[0-9.]+)\""],
+      "description": "mise version in .mise.toml and the CI setup action",
+      "managerFilePatterns": ["/^\\.mise\\.toml$/", "/^\\.github/actions/setup/action\\.yml$/"],
+      "matchStrings": ["min_version = \"(?<currentValue>[0-9.]+)\"", "version: (?<currentValue>[0-9.]+) # kept in sync with min_version"],
       "depNameTemplate": "jdx/mise",
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v(?<version>.*)$",
