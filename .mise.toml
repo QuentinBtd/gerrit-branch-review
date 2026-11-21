@@ -4,7 +4,7 @@
 # which pin it separately), then: `mise trust && mise install && mise run doctor`.
 # Every task delegates to a script under tools/scripts so that CI and local runs share one
 # implementation.
-min_version = "2026.9.18"
+min_version = "2026.11.4"
 
 [settings]
 lockfile = true
